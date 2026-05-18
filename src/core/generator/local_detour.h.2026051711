@@ -1,0 +1,497 @@
+#pragma once
+/**
+ * LocalDetour — Phase 3 局部绕障
+ *
+ * 设计原则：
+ *  ① 仅在参数区间 [t_in, t_out] 内做局部小变形，原曲线首尾段保持不动
+ *  ② 绕障段使用 1~3 段三次贝塞尔拼接，拼接处严格满足 G1（切线连续）
+ *  ③ 绕障方向由"障碍物最近边界点到原曲线的推开向量"决定，
+ *     同时优先选绕行弧长更短的一侧
+ *  ④ 绕障幅度尽可能小（只要清除安全距离即可），不做大变形
+ *  ⑤ 非相交约束在绕障段适当降级（只检查端点对齐，不强制组内有序）
+ */
+#include "../data_types.h"
+#include "../bezier/cubic_bezier.h"
+#include "../preprocess/obstacle_index.h"
+#include "../config.h"
+#include "../../utils/geom_utils.h"
+#include "../../utils/logger.h"
+#include <vector>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+// ─────────────────────────────────────────────
+// 绕障结果：由若干段折线首尾 G1 拼成的完整路径
+// ─────────────────────────────────────────────
+struct LocalDetourResult {
+    Polyline finalPts;           // 最终采样折线（含原始前后段 + 绕障中间段）
+    bool     success    = false; // 是否成功绕障（无穿越）
+    bool     relaxedNI  = true;  // 非相交约束已降级
+    int      detourSegs = 0;     // 绕障段数
+};
+
+// ─────────────────────────────────────────────
+// 违规区间描述
+// ─────────────────────────────────────────────
+struct ViolInterval {
+    double tIn  = 0.0;   // 进入违规区间的参数
+    double tOut = 1.0;   // 离开违规区间的参数
+    Point2D pIn, pOut;   // 对应曲线上的点
+    Point2D tangIn, tangOut; // 切线方向
+    // 主要违规障碍物的"绕行中心"和"绕行半径"
+    Point2D obsCenter;
+    double  obsRadius = 1.0;
+    Point2D pushDir;     // 推开方向（从障碍物朝向曲线侧）
+};
+
+class LocalDetour {
+    const ObstacleSpatialIndex& idx_;
+    double safeMargin_;
+    double checkSpacing_;
+
+public:
+    LocalDetour(const ObstacleSpatialIndex& idx,
+                double safeMargin,
+                double checkSpacing = 0.15)
+        : idx_(idx), safeMargin_(safeMargin), checkSpacing_(checkSpacing) {}
+
+    /**
+     * 主入口：对一条三次贝塞尔曲线做局部绕障
+     * @param curve   原始曲线（Phase1/2调整后仍有违规）
+     * @param samplingMode / samplingParam 最终采样参数
+     */
+    LocalDetourResult compute(
+        const CubicBezier& curve,
+        const std::string& samplingMode,
+        double samplingParam)
+    {
+        LocalDetourResult res;
+
+        // 1. 找出所有违规区间
+        auto intervals = findViolIntervals(curve);
+        if (intervals.empty()) {
+            // 无违规，直接采样原曲线
+            res.finalPts = sample(curve, samplingMode, samplingParam);
+            res.success  = true;
+            return res;
+        }
+
+        Logger::info("LocalDetour: " + std::to_string(intervals.size())
+                     + " violation interval(s) detected, building detour...");
+
+        // 2. 合并重叠区间（保守策略：扩展 10% 缓冲）
+        auto merged = mergeIntervals(intervals, curve);
+
+        // 3. 对每段违规区间逐段构建绕障曲线，拼接进最终折线
+        Polyline full;
+        double tCur = 0.0;
+
+        for (auto& iv : merged) {
+            // 3a. 把原曲线 [tCur, iv.tIn] 段采入 full
+            appendOriginalSegment(curve, tCur, iv.tIn, full);
+
+            // 3b. 构建绕障段（1~3 段贝塞尔）
+            auto detourPts = buildDetourSegment(curve, iv);
+
+            if (detourPts.empty()) {
+                // 绕障失败，退回原始段（允许穿越，标记失败）
+                appendOriginalSegment(curve, iv.tIn, iv.tOut, full);
+                res.success = false;
+                Logger::warn("LocalDetour: detour construction failed for interval ["
+                    + std::to_string(iv.tIn) + "," + std::to_string(iv.tOut) + "]");
+            } else {
+                // 追加绕障折线（跳过与 full 末尾重复的点）
+                bool first = true;
+                for (auto& p : detourPts) {
+                    if (first && !full.empty() && dist(full.back(), p) < 1e-4) {
+                        first = false; continue;
+                    }
+                    first = false;
+                    full.push_back(p);
+                }
+                res.detourSegs++;
+            }
+
+            tCur = iv.tOut;
+        }
+
+        // 3c. 原曲线剩余末尾段
+        appendOriginalSegment(curve, tCur, 1.0, full);
+
+        // 4. 强制端点精确
+        if (!full.empty()) {
+            full.front() = curve.ctrl[0];
+            full.back()  = curve.ctrl[3];
+        }
+
+        // 5. 检验是否仍有违规
+        auto finalViols = idx_.checkViolations(full, safeMargin_);
+        res.success   = finalViols.empty();
+        res.finalPts  = full;
+        res.relaxedNI = true;
+
+        if (!res.success)
+            Logger::warn("LocalDetour: " + std::to_string(finalViols.size())
+                         + " violation(s) remain after detour.");
+        else
+            Logger::info("LocalDetour: success, detourSegs=" + std::to_string(res.detourSegs));
+
+        return res;
+    }
+
+    // ──────────────────────────────────────────
+    // 对复合贝塞尔（两段）的局部绕障
+    // ──────────────────────────────────────────
+    LocalDetourResult computeComposite(
+        const CompositeBezier& comp,
+        const std::string& samplingMode,
+        double samplingParam)
+    {
+        // 分别对两段处理，然后拼合
+        auto r1 = compute(comp.seg1, samplingMode, samplingParam);
+        auto r2 = compute(comp.seg2, samplingMode, samplingParam);
+
+        LocalDetourResult res;
+        res.finalPts = r1.finalPts;
+        // 跳过 r2 首点（与 r1 末点重合）
+        for (size_t i = 1; i < r2.finalPts.size(); ++i)
+            res.finalPts.push_back(r2.finalPts[i]);
+
+        res.success    = r1.success && r2.success;
+        res.detourSegs = r1.detourSegs + r2.detourSegs;
+        res.relaxedNI  = true;
+        return res;
+    }
+
+private:
+    // ══════════════════════════════════════════
+    // 步骤 1：找违规区间
+    // ══════════════════════════════════════════
+    std::vector<ViolInterval> findViolIntervals(const CubicBezier& curve) const {
+        // 细密采样（固定 200 点），找到所有违规采样索引
+        const int N = 200;
+        std::vector<Point2D> pts;
+        pts.reserve(N + 1);
+        for (int i = 0; i <= N; ++i) pts.push_back(curve.eval(i * 1.0 / N));
+
+        auto viols = idx_.checkViolations(pts, safeMargin_);
+        if (viols.empty()) return {};
+
+        // 违规点索引集
+        std::vector<bool> violated(N + 1, false);
+        struct ObsInfo { Point2D pushDir; double dist; std::string id; };
+        std::map<int, ObsInfo> violInfo;
+        for (auto& v : viols) {
+            violated[v.ptIdx] = true;
+            auto& oi = violInfo[v.ptIdx];
+            if (oi.dist == 0 || v.distToObs < oi.dist) {
+                oi = {v.pushDir, v.distToObs, v.obsId};
+            }
+        }
+
+        // 连续违规区间 → ViolInterval
+        std::vector<ViolInterval> intervals;
+        int i = 0;
+        while (i <= N) {
+            if (!violated[i]) { ++i; continue; }
+
+            // 找区间起点（往前多留一点缓冲）
+            int iStart = std::max(0, i - 2);
+            int j = i;
+            while (j <= N && violated[j]) ++j;
+            int iEnd = std::min(N, j + 2); // 往后多留缓冲
+
+            ViolInterval iv;
+            iv.tIn  = iStart * 1.0 / N;
+            iv.tOut = iEnd   * 1.0 / N;
+            iv.pIn  = curve.eval(iv.tIn);
+            iv.pOut = curve.eval(iv.tOut);
+            iv.tangIn  = curve.evalDeriv1(iv.tIn).normalized();
+            iv.tangOut = curve.evalDeriv1(iv.tOut).normalized();
+
+            // 取该区间内推力最强的违规点作为"主障碍物"信息
+            Point2D bestPush{0, 0};
+            double bestWeight = 0;
+            for (int k = iStart; k <= iEnd && k <= N; ++k) {
+                auto it = violInfo.find(k);
+                if (it == violInfo.end()) continue;
+                double w = (safeMargin_ - it->second.dist + EPS);
+                bestPush += it->second.pushDir * w;
+                bestWeight += w;
+            }
+            iv.pushDir = (bestWeight > EPS) ?
+                         bestPush.normalized() : Point2D{0, 1};
+
+            // 估算障碍物中心和半径（用违规段中点 + 推开方向反推）
+            Point2D midParam = curve.eval(0.5 * (iv.tIn + iv.tOut));
+            double  intrusion = safeMargin_; // 至少一个安全距离
+            for (int k = iStart; k <= iEnd && k <= N; ++k) {
+                auto it = violInfo.find(k);
+                if (it != violInfo.end())
+                    intrusion = std::max(intrusion, safeMargin_ - it->second.dist);
+            }
+            // 障碍物中心：从曲线段中点沿推力反方向走"入侵深度"
+            iv.obsCenter = midParam - iv.pushDir * intrusion;
+            iv.obsRadius = intrusion + safeMargin_ * 0.5;
+
+            intervals.push_back(iv);
+            i = iEnd + 1;
+        }
+        return intervals;
+    }
+
+    // ══════════════════════════════════════════
+    // 步骤 2：合并重叠/相邻区间
+    // ══════════════════════════════════════════
+    std::vector<ViolInterval> mergeIntervals(
+        const std::vector<ViolInterval>& ivs,
+        const CubicBezier& curve) const
+    {
+        if (ivs.empty()) return {};
+        std::vector<ViolInterval> merged;
+        ViolInterval cur = ivs[0];
+
+        for (size_t k = 1; k < ivs.size(); ++k) {
+            if (ivs[k].tIn <= cur.tOut + 0.05) { // 5% 以内合并
+                cur.tOut    = std::max(cur.tOut, ivs[k].tOut);
+                cur.pOut    = curve.eval(cur.tOut);
+                cur.tangOut = curve.evalDeriv1(cur.tOut).normalized();
+                // 推力取平均
+                cur.pushDir = (cur.pushDir + ivs[k].pushDir).normalized();
+            } else {
+                merged.push_back(cur);
+                cur = ivs[k];
+            }
+        }
+        merged.push_back(cur);
+
+        // 重新计算各区间的 pIn/pOut/tangIn/tangOut
+        for (auto& iv : merged) {
+            iv.pIn     = curve.eval(iv.tIn);
+            iv.pOut    = curve.eval(iv.tOut);
+            iv.tangIn  = curve.evalDeriv1(iv.tIn).normalized();
+            iv.tangOut = curve.evalDeriv1(iv.tOut).normalized();
+        }
+        return merged;
+    }
+
+    // ══════════════════════════════════════════
+    // 步骤 3：构建单段绕障折线（核心）
+    //
+    // 策略：
+    //  a. 先尝试单段三次贝塞尔（只调整中间控制点偏离原曲线法线方向）
+    //  b. 若不通，尝试两段贝塞尔经过一个绕障中间点
+    //  c. 若还不通，尝试三段贝塞尔经过两个绕障点（最大绕行）
+    //  d. 若仍不通，返回空（允许失败上报）
+    //
+    // 关键约束：
+    //  - 起点 pIn、切线 tangIn：G1 拼接（与前段原曲线连续）
+    //  - 终点 pOut、切线 tangOut：G1 拼接（与后段原曲线连续）
+    //  - 绕障中间控制点只在原曲线法线方向偏移（保证整体形态不变）
+    // ══════════════════════════════════════════
+    Polyline buildDetourSegment(
+        const CubicBezier& curve,
+        const ViolInterval& iv) const
+    {
+        const Point2D& pIn   = iv.pIn;
+        const Point2D& pOut  = iv.pOut;
+        const Point2D& tIn   = iv.tangIn;
+        const Point2D& tOut  = iv.tangOut;
+        double segLen = dist(pIn, pOut);
+        if (segLen < EPS) return {};
+
+        // 绕行方向（推开方向）
+        Point2D pushDir = iv.pushDir;
+        // 尝试两侧，选绕行弧长更短的一侧
+        Point2D pushL =  pushDir;
+        Point2D pushR = (pushDir * -1.0);
+
+        // ── 尝试1：单段贝塞尔直接绕 ──
+        {
+            auto pts = trySingleSegDetour(pIn, tIn, pOut, tOut, pushL, iv.obsRadius);
+            if (!pts.empty() && noViolation(pts)) return pts;
+            pts = trySingleSegDetour(pIn, tIn, pOut, tOut, pushR, iv.obsRadius);
+            if (!pts.empty() && noViolation(pts)) return pts;
+        }
+
+        // ── 尝试2：两段贝塞尔经过一个中间点 ──
+        {
+            auto pts = tryTwoSegDetour(pIn, tIn, pOut, tOut, curve, iv, pushL);
+            if (!pts.empty() && noViolation(pts)) return pts;
+            pts = tryTwoSegDetour(pIn, tIn, pOut, tOut, curve, iv, pushR);
+            if (!pts.empty() && noViolation(pts)) return pts;
+        }
+
+        // ── 尝试3：三段贝塞尔经过两个绕障点 ──
+        {
+            auto pts = tryThreeSegDetour(pIn, tIn, pOut, tOut, curve, iv, pushL);
+            if (!pts.empty() && noViolation(pts)) return pts;
+            pts = tryThreeSegDetour(pIn, tIn, pOut, tOut, curve, iv, pushR);
+            if (!pts.empty() && noViolation(pts)) return pts;
+        }
+
+        // ── 失败 ──
+        return {};
+    }
+
+    // ── 单段绕障（G1 起止，中间控制点侧移） ──
+    Polyline trySingleSegDetour(
+        const Point2D& pIn,  const Point2D& tIn,
+        const Point2D& pOut, const Point2D& tOut,
+        const Point2D& pushDir,
+        double obsRadius) const
+    {
+        double d = dist(pIn, pOut);
+        if (d < EPS) return {};
+
+        // 增大 alpha/beta 并加法线偏移
+        double alpha = 0.4, beta = 0.4;
+        // 偏移量：至少绕过障碍物半径 + 安全距离
+        double offset = obsRadius + safeMargin_ * 1.2;
+        // 限制最大偏移（不超过段长的 60%，保持整体形态）
+        offset = std::min(offset, d * 0.6);
+
+        Point2D P1 = pIn  + tIn  * (alpha * d) + pushDir * offset;
+        Point2D P2 = pOut + tOut * (beta  * d) + pushDir * offset;
+
+        CubicBezier cb(pIn, P1, P2, pOut);
+        return cb.sampleAdaptive(0.5, 1.0, 0.05);
+    }
+
+    // ── 两段绕障（经过一个绕障中间点 M） ──
+    Polyline tryTwoSegDetour(
+        const Point2D& pIn,  const Point2D& tIn,
+        const Point2D& pOut, const Point2D& tOut,
+        const CubicBezier& origCurve,
+        const ViolInterval& iv,
+        const Point2D& pushDir) const
+    {
+        double d = dist(pIn, pOut);
+        if (d < EPS) return {};
+
+        // 中间点 M：原曲线段中间参数处偏移
+        double tMid = 0.5 * (iv.tIn + iv.tOut);
+        Point2D origMid  = origCurve.eval(tMid);
+        double  offset   = iv.obsRadius + safeMargin_ * 1.5;
+        offset = std::min(offset, d * 0.7);
+
+        Point2D M     = origMid + pushDir * offset;
+        Point2D tMidV = (pOut - pIn).normalized(); // 中间点处的近似切线
+
+        // 段1: pIn → M，G1 在 pIn
+        double d1 = dist(pIn, M);
+        if (d1 < EPS) return {};
+        double alpha1 = 0.38, beta1 = 0.38;
+        Point2D P1_1 = pIn + tIn  * (alpha1 * d1);
+        Point2D P1_2 = M   - tMidV * (beta1  * d1);
+        CubicBezier seg1(pIn, P1_1, P1_2, M);
+
+        // G1 拼接：段2首切线 = 段1末切线
+        Point2D tAtM = seg1.evalDeriv1(1.0).normalized();
+
+        // 段2: M → pOut，G1 在 pOut
+        double d2 = dist(M, pOut);
+        if (d2 < EPS) return {};
+        double alpha2 = 0.38, beta2 = 0.38;
+        Point2D P2_1 = M    + tAtM * (alpha2 * d2);
+        Point2D P2_2 = pOut + tOut * (beta2  * d2);
+        CubicBezier seg2(M, P2_1, P2_2, pOut);
+
+        // 采样拼合
+        Polyline pts = seg1.sampleAdaptive(0.5, 1.0, 0.05);
+        Polyline p2  = seg2.sampleAdaptive(0.5, 1.0, 0.05);
+        for (size_t i = 1; i < p2.size(); ++i) pts.push_back(p2[i]);
+        return pts;
+    }
+
+    // ── 三段绕障（经过两个绕障点 M1, M2） ──
+    Polyline tryThreeSegDetour(
+        const Point2D& pIn,  const Point2D& tIn,
+        const Point2D& pOut, const Point2D& tOut,
+        const CubicBezier& origCurve,
+        const ViolInterval& iv,
+        const Point2D& pushDir) const
+    {
+        double d = dist(pIn, pOut);
+        if (d < EPS) return {};
+
+        // M1：在 tIn + 1/3 处偏移，M2：在 tIn + 2/3 处偏移
+        double tM1 = iv.tIn + (iv.tOut - iv.tIn) / 3.0;
+        double tM2 = iv.tIn + 2.0 * (iv.tOut - iv.tIn) / 3.0;
+        Point2D origM1 = origCurve.eval(tM1);
+        Point2D origM2 = origCurve.eval(tM2);
+
+        double offset = iv.obsRadius + safeMargin_ * 2.0;
+        offset = std::min(offset, d * 0.75);
+
+        Point2D M1 = origM1 + pushDir * offset;
+        Point2D M2 = origM2 + pushDir * offset;
+
+        // 辅助：构建两点间的 G1 连续三次贝塞尔
+        auto mkSeg = [](const Point2D& A, const Point2D& tA,
+                        const Point2D& B, const Point2D& tB,
+                        double alpha=0.35, double beta=0.35) -> CubicBezier {
+            double d = dist(A, B);
+            if (d < EPS) return CubicBezier(A, A, B, B);
+            return CubicBezier(A, A + tA*(alpha*d), B + tB*(beta*d), B);
+        };
+
+        Point2D tM1dir = (M2 - pIn).normalized();
+        Point2D tM2dir = (pOut - M1).normalized();
+
+        CubicBezier s1 = mkSeg(pIn, tIn, M1, tM1dir);
+        Point2D tAtM1  = s1.evalDeriv1(1.0).normalized();
+
+        CubicBezier s2 = mkSeg(M1, tAtM1, M2, tM2dir);
+        Point2D tAtM2  = s2.evalDeriv1(1.0).normalized();
+
+        CubicBezier s3 = mkSeg(M2, tAtM2, pOut, tOut);
+
+        Polyline pts = s1.sampleAdaptive(0.5, 1.0, 0.05);
+        auto p2 = s2.sampleAdaptive(0.5, 1.0, 0.05);
+        auto p3 = s3.sampleAdaptive(0.5, 1.0, 0.05);
+        for (size_t i = 1; i < p2.size(); ++i) pts.push_back(p2[i]);
+        for (size_t i = 1; i < p3.size(); ++i) pts.push_back(p3[i]);
+        return pts;
+    }
+
+    // ══════════════════════════════════════════
+    // 辅助：将原曲线 [t0,t1] 段采样追加到 out
+    // ══════════════════════════════════════════
+    void appendOriginalSegment(
+        const CubicBezier& curve,
+        double t0, double t1,
+        Polyline& out) const
+    {
+        if (t1 <= t0 + EPS) return;
+        // 自适应子分曲线采样（用递归参数细分）
+        int N = std::max(4, (int)((t1 - t0) * 100));
+        bool first = out.empty();
+        for (int i = (first ? 0 : 1); i <= N; ++i) {
+            double t = t0 + (t1 - t0) * i / N;
+            out.push_back(curve.eval(t));
+        }
+    }
+
+    // ══════════════════════════════════════════
+    // 辅助：检查折线是否无违规
+    // ══════════════════════════════════════════
+    bool noViolation(const Polyline& pts) const {
+        return idx_.checkViolations(pts, safeMargin_).empty();
+    }
+
+    // ══════════════════════════════════════════
+    // 辅助：统一采样
+    // ══════════════════════════════════════════
+    Polyline sample(const CubicBezier& c,
+        const std::string& mode, double param) const
+    {
+        Polyline pts;
+        if      (mode == "fixed_spacing") pts = c.sampleBySpacing(param > 0 ? param : 0.5);
+        else if (mode == "fixed_count")   pts = c.sampleCount((int)(param > 0 ? param : 50));
+        else                              pts = c.sampleAdaptive(0.5, 2.0, 0.05);
+        if (!pts.empty()) { pts.front() = c.ctrl[0]; pts.back() = c.ctrl[3]; }
+        return pts;
+    }
+};

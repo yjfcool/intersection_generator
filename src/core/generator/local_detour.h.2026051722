@@ -1,0 +1,519 @@
+#pragma once
+/**
+ * LocalDetour — Phase3 局部绕障（严格G1版）
+ *
+ * G1连续保证的数学基础：
+ *   设拼接点为 P，切线为 T（单位向量），三次贝塞尔曲线在该点的控制点手柄为 H
+ *   若曲线为起点：B(0)=P，B'(0)=3(H-P)，要求 H-P 与 T 同向 → H = P + T*L (L>0)
+ *   若曲线为终点：B(1)=P，B'(1)=3(P-H)，要求 P-H 与 T 同向 → H = P - T*L (L>0)
+ *
+ * 绕障中间点 M 的设计原则：
+ *   - M 在原曲线法线方向偏移（保整体形态）
+ *   - M 处的切线 tM 由前段末切线决定（G1拼接）
+ *   - 偏移量通过二分搜索确定最小值（最小变形）
+ *
+ * 与原曲线拼接：
+ *   - 拼接点 pIn/pOut 的切线 tangIn/tangOut 来自原曲线的微分
+ *   - appendOrig 采用固定步长确保最后采样点精确在 tIn/tOut
+ *   - detour 段首尾端点严格等于 pIn/pOut（锁定）
+ */
+#include "../data_types.h"
+#include "../bezier/cubic_bezier.h"
+#include "../preprocess/obstacle_index.h"
+#include "../config.h"
+#include "../../utils/geom_utils.h"
+#include "../../utils/logger.h"
+#include <vector>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+// ─── 违规区间 ────────────────────────────────
+struct ViolInterval {
+    double  tIn=0, tOut=1;
+    Point2D pIn,  pOut;
+    Point2D tangIn, tangOut;   // 原曲线在拼接点的切线（G1约束用）
+    Point2D normalLeft;        // 曲线法线左方向（P0→P3的左法线）
+};
+
+// ─── 局部绕障结果 ─────────────────────────────
+struct LocalDetourResult {
+    Polyline finalPts;
+    bool     success    = false;
+    bool     relaxedNI  = true;  // 绕障段非相交约束可降级
+    int      detourSegs = 0;
+};
+
+class LocalDetour {
+    const ObstacleSpatialIndex& idx_;
+    double safeMargin_;
+    double checkSpacing_;
+    double maxOffsetRatio_;
+
+public:
+    LocalDetour(const ObstacleSpatialIndex& idx,
+                double safeMargin,
+                double checkSpacing   = 0.15,
+                double maxOffsetRatio = 4.0)
+        : idx_(idx), safeMargin_(safeMargin)
+        , checkSpacing_(checkSpacing)
+        , maxOffsetRatio_(maxOffsetRatio)
+    {}
+
+    // ══════════════════════════════════════════
+    // 主入口
+    // ══════════════════════════════════════════
+    LocalDetourResult compute(
+        const CubicBezier& curve,
+        const std::string& samplingMode,
+        double samplingParam)
+    {
+        LocalDetourResult res;
+        const int DETECT_N = 400;  // 高精度检测
+        auto viols = detectViols(curve, DETECT_N);
+        if (viols.empty()) {
+            res.finalPts = sampleFull(curve, samplingMode, samplingParam);
+            res.success  = true;
+            return res;
+        }
+        Logger::info("LocalDetour: " + std::to_string(viols.size()) +
+                     " viol interval(s), building G1-continuous detour...");
+        auto merged = mergeAndRefine(viols, curve);
+
+        Polyline full;
+        double tCur = 0.0;
+        for (auto& iv : merged) {
+            appendOrigExact(curve, tCur, iv.tIn, full);
+            auto det = buildDetour(curve, iv);
+            if (!det.empty()) {
+                appendSeg(det, full);
+                res.detourSegs++;
+            } else {
+                Logger::warn("LocalDetour: segment failed for ["
+                    + std::to_string(iv.tIn) + "," + std::to_string(iv.tOut) + "]");
+                appendOrigExact(curve, iv.tIn, iv.tOut, full);
+                res.success = false;
+            }
+            tCur = iv.tOut;
+        }
+        appendOrigExact(curve, tCur, 1.0, full);
+
+        // 严格锁定首尾端点
+        if (!full.empty()) {
+            full.front() = curve.ctrl[0];
+            full.back()  = curve.ctrl[3];
+        }
+        // 修复折线中的退化点（相邻点重合）
+        full = removeDegenerate(full);
+
+        auto remain = idx_.checkViolations(full, safeMargin_);
+        res.success   = remain.empty();
+        res.finalPts  = full;
+        res.relaxedNI = true;
+        if (res.success)
+            Logger::info("LocalDetour: all obstacles cleared, segs=" +
+                         std::to_string(res.detourSegs));
+        else
+            Logger::warn("LocalDetour: " + std::to_string(remain.size()) +
+                         " violation(s) remain after detour.");
+        return res;
+    }
+
+    LocalDetourResult computeComposite(
+        const CompositeBezier& comp,
+        const std::string& samplingMode, double samplingParam)
+    {
+        auto r1 = compute(comp.seg1, samplingMode, samplingParam);
+        auto r2 = compute(comp.seg2, samplingMode, samplingParam);
+        LocalDetourResult res;
+        res.finalPts = r1.finalPts;
+        for (size_t i = 1; i < r2.finalPts.size(); ++i)
+            res.finalPts.push_back(r2.finalPts[i]);
+        res.success    = r1.success && r2.success;
+        res.detourSegs = r1.detourSegs + r2.detourSegs;
+        res.relaxedNI  = true;
+        return res;
+    }
+
+private:
+    // ══════════════════════════════════════════
+    // 1. 检测违规区间
+    // ══════════════════════════════════════════
+    std::vector<ViolInterval> detectViols(const CubicBezier& curve, int N) const {
+        std::vector<Point2D> pts;
+        pts.reserve(N+1);
+        for (int i=0;i<=N;++i) pts.push_back(curve.eval(i*1.0/N));
+        auto viols = idx_.checkViolations(pts, safeMargin_);
+        if (viols.empty()) return {};
+
+        std::vector<bool> vio(N+1,false);
+        for (auto& v:viols) if(v.ptIdx>=0&&v.ptIdx<=N) vio[v.ptIdx]=true;
+
+        Point2D axis   = (curve.ctrl[3]-curve.ctrl[0]).normalized();
+        Point2D normL  = axis.rotLeft();
+
+        std::vector<ViolInterval> ivs;
+        for (int i=0; i<=N;) {
+            if (!vio[i]) {++i;continue;}
+            // 前缓冲：确保拼接点在安全距离外
+            int iS = std::max(0, i-4);
+            int j  = i;
+            while (j<=N && vio[j]) ++j;
+            int iE = std::min(N, j+4);
+
+            ViolInterval iv;
+            iv.tIn      = iS*1.0/N;
+            iv.tOut     = iE*1.0/N;
+            iv.pIn      = curve.eval(iv.tIn);
+            iv.pOut     = curve.eval(iv.tOut);
+            iv.tangIn   = curve.evalDeriv1(iv.tIn).normalized();
+            iv.tangOut  = curve.evalDeriv1(iv.tOut).normalized();
+            iv.normalLeft = normL;
+            ivs.push_back(iv);
+            i = iE+1;
+        }
+        return ivs;
+    }
+
+    // ══════════════════════════════════════════
+    // 2. 合并区间并精化拼接点（确保拼接点在障碍物安全距离外）
+    // ══════════════════════════════════════════
+    std::vector<ViolInterval> mergeAndRefine(
+        const std::vector<ViolInterval>& ivs,
+        const CubicBezier& curve) const
+    {
+        if (ivs.empty()) return {};
+        std::vector<ViolInterval> merged;
+        ViolInterval cur = ivs[0];
+        for (size_t k=1;k<ivs.size();++k) {
+            if (ivs[k].tIn <= cur.tOut+0.05) {
+                cur.tOut = std::max(cur.tOut, ivs[k].tOut);
+            } else {
+                merged.push_back(cur);
+                cur = ivs[k];
+            }
+        }
+        merged.push_back(cur);
+
+        // 精化每个区间：确保 pIn/pOut 处障碍物距离 >= safeMargin
+        for (auto& iv : merged) {
+            iv.pIn     = curve.eval(iv.tIn);
+            iv.pOut    = curve.eval(iv.tOut);
+            iv.tangIn  = curve.evalDeriv1(iv.tIn).normalized();
+            iv.tangOut = curve.evalDeriv1(iv.tOut).normalized();
+            // 检查拼接点本身是否安全（若不安全则再扩展缓冲）
+            auto v1 = idx_.checkViolations({iv.pIn},  safeMargin_*0.9);
+            auto v2 = idx_.checkViolations({iv.pOut}, safeMargin_*0.9);
+            if (!v1.empty() && iv.tIn > 0.01) {
+                iv.tIn -= 0.03;
+                iv.tIn  = std::max(0.0, iv.tIn);
+                iv.pIn     = curve.eval(iv.tIn);
+                iv.tangIn  = curve.evalDeriv1(iv.tIn).normalized();
+            }
+            if (!v2.empty() && iv.tOut < 0.99) {
+                iv.tOut += 0.03;
+                iv.tOut  = std::min(1.0, iv.tOut);
+                iv.pOut    = curve.eval(iv.tOut);
+                iv.tangOut = curve.evalDeriv1(iv.tOut).normalized();
+            }
+        }
+        return merged;
+    }
+
+    // ══════════════════════════════════════════
+    // 3. 构建绕障段（严格G1）
+    // ══════════════════════════════════════════
+    Polyline buildDetour(const CubicBezier& curve, const ViolInterval& iv) const {
+        // 评估两侧（左/右）的最小所需偏移量，选更小的
+        Point2D dirL =  iv.normalLeft;
+        Point2D dirR = (iv.normalLeft * -1.0);
+
+        double offL = binarySearchMinOffset(curve, iv, dirL);
+        double offR = binarySearchMinOffset(curve, iv, dirR);
+
+        Logger::debug("  bsearch offL=" + std::to_string(offL) +
+                      " offR=" + std::to_string(offR));
+
+        // 候选方向列表（按偏移量从小到大）
+        struct Cand { Point2D dir; double off; };
+        std::vector<Cand> cands;
+        if (offL >= 0) cands.push_back({dirL, offL});
+        if (offR >= 0) cands.push_back({dirR, offR});
+        if (cands.empty()) {
+            double segLen = dist(iv.pIn, iv.pOut);
+            double maxOff = segLen * maxOffsetRatio_;
+            cands.push_back({dirL, maxOff});
+            cands.push_back({dirR, maxOff});
+        }
+        std::sort(cands.begin(), cands.end(),
+            [](const Cand& a, const Cand& b){ return a.off < b.off; });
+
+        for (auto& cand : cands) {
+            // 尝试 2段（优先，比1段更容易满足绕障+G1）
+            auto pts = buildTwoSegG1(curve, iv, cand.dir, cand.off);
+            if (!pts.empty() && noViol(pts)) return pts;
+            // 尝试 3段
+            pts = buildThreeSegG1(curve, iv, cand.dir, cand.off);
+            if (!pts.empty() && noViol(pts)) return pts;
+            // 尝试 1段（大偏移时才可能有效）
+            pts = buildOneSegG1(iv, cand.dir, cand.off);
+            if (!pts.empty() && noViol(pts)) return pts;
+        }
+        return {};
+    }
+
+    // ── 二分搜索最小偏移量 ────────────────────────────────────────
+    double binarySearchMinOffset(
+        const CubicBezier& curve, const ViolInterval& iv,
+        const Point2D& dir) const
+    {
+        double segLen = dist(iv.pIn, iv.pOut);
+        double lo=0, hi=segLen*maxOffsetRatio_;
+        // 先验证最大偏移能否清除障碍
+        auto pts = buildTwoSegG1(curve, iv, dir, hi);
+        if (pts.empty() || !noViol(pts)) {
+            pts = buildThreeSegG1(curve, iv, dir, hi);
+            if (pts.empty() || !noViol(pts)) return -1;
+        }
+        // 二分
+        for (int k=0; k<24; ++k) {
+            double mid = 0.5*(lo+hi);
+            auto p = buildTwoSegG1(curve, iv, dir, mid);
+            bool ok = !p.empty() && noViol(p);
+            if (!ok) {
+                p = buildThreeSegG1(curve, iv, dir, mid);
+                ok = !p.empty() && noViol(p);
+            }
+            if (ok) hi=mid; else lo=mid;
+        }
+        return hi;
+    }
+
+    // ══════════════════════════════════════════
+    // 4a. 单段绕障（严格G1）
+    //
+    // 构造：pIn → pOut，G1在两端
+    //   P1 = pIn + tangIn * L1        （L1 > 0，严格G1进入）
+    //   P2 = pOut - tangOut * L2      （L2 > 0，严格G1退出）
+    //         注：B'(1)=3(pOut-P2)，pOut-P2=tangOut*L2 → 方向=tangOut ✓
+    //
+    // 偏移通过增大 L1/L2 实现（使曲线"鼓起"），同时加中点横向拉拽
+    // ══════════════════════════════════════════
+    Polyline buildOneSegG1(
+        const ViolInterval& iv,
+        const Point2D& dir, double offset) const
+    {
+        if (offset < EPS) return {};
+        double d = dist(iv.pIn, iv.pOut);
+        if (d < EPS) return {};
+
+        // 手柄长度：标准值 + 根据偏移量放大
+        double L = std::max(0.3*d, offset*1.5);
+        Point2D P1 = iv.pIn  + iv.tangIn  * L;
+        // P2 使得 B'(1) = 3(pOut-P2) 方向 = tangOut
+        Point2D P2 = iv.pOut - iv.tangOut * L;
+
+        CubicBezier cb(iv.pIn, P1, P2, iv.pOut);
+        // 检查曲线中点是否已经偏到障碍物另一侧
+        // 若不够，用"虚拟第三点拉拽"——不直接改P1/P2（保G1），
+        // 而是把曲线升阶为复合曲线
+        auto pts = cb.sampleAdaptive(0.3, 0.8, 0.04);
+        if (!pts.empty()){ pts.front()=iv.pIn; pts.back()=iv.pOut; }
+        return pts;
+    }
+
+    // ══════════════════════════════════════════
+    // 4b. 两段绕障（严格G1，核心算法）
+    //
+    // 绕障点 M = 原曲线中间点 + dir*offset
+    //
+    // 段1: pIn → M
+    //   P1_1 = pIn + tangIn * L1       （G1：B'(0)=tangIn方向）
+    //   P1_2 = M   - tM * L1b          （G1：B'(1)=tM方向，tM由段1自洽确定）
+    //
+    // 段2: M → pOut
+    //   P2_1 = M    + tM * L2           （G1：B'(0)=tM方向，与段1末切线相同）
+    //   P2_2 = pOut - tangOut * L2b     （G1：B'(1)=tangOut方向）
+    //         pOut - P2_2 = tangOut*L2b → 方向=tangOut ✓
+    //
+    // 关键：tM 由迭代自洽确定（段1末切线 = 段2首切线）
+    // ══════════════════════════════════════════
+    Polyline buildTwoSegG1(
+        const CubicBezier& origCurve,
+        const ViolInterval& iv,
+        const Point2D& dir, double offset) const
+    {
+        if (offset < EPS) return {};
+        double tMid = 0.5*(iv.tIn + iv.tOut);
+        Point2D M   = origCurve.eval(tMid) + dir*offset;
+
+        double d1 = dist(iv.pIn, M);
+        double d2 = dist(M, iv.pOut);
+        if (d1 < EPS || d2 < EPS) return {};
+
+        // 初始 tM：pIn→M→pOut 的平均方向
+        Point2D tM_init = ((M - iv.pIn).normalized() +
+                           (iv.pOut - M).normalized()).normalized();
+        if (tM_init.norm() < EPS) tM_init = (M - iv.pIn).normalized();
+
+        // 迭代精化 tM（使段1末切线 = 段2首切线）
+        // 方法：段1固定 pIn/tangIn，tM为未知量，用段1末切线反馈更新
+        Point2D tM = tM_init;
+        for (int it=0; it<6; ++it) {
+            // 手柄长度：经验值，影响平滑度
+            double L1  = 0.38 * d1;
+            double L1b = 0.38 * d1;
+            double L2  = 0.38 * d2;
+            double L2b = 0.38 * d2;
+
+            // 段1
+            Point2D P1_1 = iv.pIn + iv.tangIn * L1;
+            Point2D P1_2 = M      - tM        * L1b;
+            CubicBezier seg1(iv.pIn, P1_1, P1_2, M);
+            Point2D tM_actual = seg1.evalDeriv1(1.0).normalized();
+
+            // 用实际末切线更新 tM
+            tM = tM_actual;
+        }
+
+        double L1  = 0.38*d1, L1b = 0.38*d1;
+        double L2  = 0.38*d2, L2b = 0.38*d2;
+        Point2D P1_1 = iv.pIn + iv.tangIn * L1;
+        Point2D P1_2 = M      - tM        * L1b;
+        CubicBezier seg1(iv.pIn, P1_1, P1_2, M);
+        // 段2首切线 = 段1末切线
+        Point2D tM_final = seg1.evalDeriv1(1.0).normalized();
+        // P2_2 = pOut - tangOut*L2b，确保 B'(1)=3(pOut-P2_2)=3*tangOut*L2b → 方向=tangOut
+        Point2D P2_1 = M    + tM_final  * L2;
+        Point2D P2_2 = iv.pOut - iv.tangOut * L2b;
+        CubicBezier seg2(M, P2_1, P2_2, iv.pOut);
+
+        // 验证G1角度（调试）
+        double g1_in = angleDeg(seg1.evalDeriv1(0.0).normalized(), iv.tangIn);
+        double g1_mid= angleDeg(seg1.evalDeriv1(1.0).normalized(),
+                                seg2.evalDeriv1(0.0).normalized());
+        double g1_out= angleDeg(seg2.evalDeriv1(1.0).normalized(), iv.tangOut);
+        Logger::debug("  TwoSegG1 angles: in=" + std::to_string(g1_in) +
+                      " mid=" + std::to_string(g1_mid) +
+                      " out=" + std::to_string(g1_out));
+
+        Polyline pts = seg1.sampleAdaptive(0.3, 0.8, 0.04);
+        auto p2      = seg2.sampleAdaptive(0.3, 0.8, 0.04);
+        for (size_t i=1;i<p2.size();++i) pts.push_back(p2[i]);
+        if (!pts.empty()) { pts.front()=iv.pIn; pts.back()=iv.pOut; }
+        return pts;
+    }
+
+    // ══════════════════════════════════════════
+    // 4c. 三段绕障（严格G1）
+    //
+    // M1/M2 为两个绕障点，段间 G1 连续
+    // ══════════════════════════════════════════
+    Polyline buildThreeSegG1(
+        const CubicBezier& origCurve,
+        const ViolInterval& iv,
+        const Point2D& dir, double offset) const
+    {
+        if (offset < EPS) return {};
+        double span = iv.tOut - iv.tIn;
+        Point2D M1 = origCurve.eval(iv.tIn + span*0.33) + dir*offset;
+        Point2D M2 = origCurve.eval(iv.tIn + span*0.67) + dir*offset;
+
+        double d1 = dist(iv.pIn, M1);
+        double d2 = dist(M1, M2);
+        double d3 = dist(M2, iv.pOut);
+        if (d1<EPS||d2<EPS||d3<EPS) return {};
+
+        // 各段衔接切线（由前段末切线决定）
+        // 段1: pIn→M1
+        Point2D tM1_init = (M1-iv.pIn).normalized();
+        Point2D tM1 = tM1_init;
+        for (int it=0;it<6;++it) {
+            CubicBezier s1(iv.pIn,
+                iv.pIn + iv.tangIn*(0.38*d1),
+                M1 - tM1*(0.38*d1), M1);
+            tM1 = s1.evalDeriv1(1.0).normalized();
+        }
+        CubicBezier seg1(iv.pIn,
+            iv.pIn + iv.tangIn*(0.38*d1),
+            M1 - tM1*(0.38*d1), M1);
+        tM1 = seg1.evalDeriv1(1.0).normalized();
+
+        // 段2: M1→M2
+        Point2D tM2_init = (M2-M1).normalized();
+        Point2D tM2 = tM2_init;
+        for (int it=0;it<6;++it) {
+            CubicBezier s2(M1,
+                M1 + tM1*(0.38*d2),
+                M2 - tM2*(0.38*d2), M2);
+            tM2 = s2.evalDeriv1(1.0).normalized();
+        }
+        CubicBezier seg2(M1,
+            M1 + tM1*(0.38*d2),
+            M2 - tM2*(0.38*d2), M2);
+        tM2 = seg2.evalDeriv1(1.0).normalized();
+
+        // 段3: M2→pOut（严格G1退出）
+        CubicBezier seg3(M2,
+            M2 + tM2*(0.38*d3),
+            iv.pOut - iv.tangOut*(0.38*d3),  // B'(1)=3(pOut-P2)=3*tangOut*L ✓
+            iv.pOut);
+
+        double g1_in  = angleDeg(seg1.evalDeriv1(0.0).normalized(), iv.tangIn);
+        double g1_out = angleDeg(seg3.evalDeriv1(1.0).normalized(), iv.tangOut);
+        Logger::debug("  ThreeSegG1 angles: in=" + std::to_string(g1_in) +
+                      " out=" + std::to_string(g1_out));
+
+        Polyline pts = seg1.sampleAdaptive(0.3, 0.8, 0.04);
+        for (auto& s : {seg2.sampleAdaptive(0.3,0.8,0.04),
+                        seg3.sampleAdaptive(0.3,0.8,0.04)})
+            for (size_t i=1;i<s.size();++i) pts.push_back(s[i]);
+        if (!pts.empty()){ pts.front()=iv.pIn; pts.back()=iv.pOut; }
+        return pts;
+    }
+
+    // ══════════════════════════════════════════
+    // 辅助：原曲线段精确采样（端点精确在 t0/t1）
+    // ══════════════════════════════════════════
+    void appendOrigExact(const CubicBezier& c, double t0, double t1,
+                         Polyline& out) const
+    {
+        if (t1 <= t0+1e-7) return;
+        int N = std::max(4, (int)((t1-t0)*300));
+        bool first = out.empty();
+        for (int i=(first?0:1); i<=N; ++i) {
+            double t = t0 + (t1-t0)*i/N;
+            out.push_back(c.eval(t));
+        }
+    }
+
+    void appendSeg(const Polyline& src, Polyline& out) const {
+        for (size_t i=(out.empty()?0:1); i<src.size(); ++i)
+            out.push_back(src[i]);
+    }
+
+    bool noViol(const Polyline& pts) const {
+        return idx_.checkViolations(pts, safeMargin_).empty();
+    }
+
+    Polyline removeDegenerate(const Polyline& src) const {
+        if (src.size() < 2) return src;
+        Polyline out;
+        out.push_back(src[0]);
+        for (size_t i=1; i<src.size(); ++i)
+            if (dist(src[i], out.back()) > 1e-6)
+                out.push_back(src[i]);
+        return out;
+    }
+
+    Polyline sampleFull(const CubicBezier& c,
+        const std::string& mode, double param) const
+    {
+        Polyline pts;
+        if      (mode=="fixed_spacing") pts=c.sampleBySpacing(param>0?param:0.5);
+        else if (mode=="fixed_count")   pts=c.sampleCount((int)(param>0?param:50));
+        else                            pts=c.sampleAdaptive(0.5,2.0,0.05);
+        if (!pts.empty()){pts.front()=c.ctrl[0];pts.back()=c.ctrl[3];}
+        return pts;
+    }
+};

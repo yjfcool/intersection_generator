@@ -1,0 +1,147 @@
+{
+  "scenario_id": "cross_intersection_01",
+  "ref_point": { "lon": 116.391, "lat": 39.907 },
+  "coord_type": "projected",
+  "lane_groups": [
+    {
+      "id": "lg_enter_south", "type": "enter",
+      "centerline_ids": ["cl_s1", "cl_s2"],
+      "edgeline_ids":   ["el_s_left", "el_s_mid", "el_s_right"]
+    },
+    {
+      "id": "lg_enter_north", "type": "enter",
+      "centerline_ids": ["cl_n1", "cl_n2"],
+      "edgeline_ids":   ["el_n_left", "el_n_mid", "el_n_right"]
+    },
+    {
+      "id": "lg_enter_west", "type": "enter",
+      "centerline_ids": ["cl_w1", "cl_w2"],
+      "edgeline_ids":   ["el_w_left", "el_w_mid", "el_w_right"]
+    },
+    {
+      "id": "lg_enter_east", "type": "enter",
+      "centerline_ids": ["cl_e1", "cl_e2"],
+      "edgeline_ids":   ["el_e_left", "el_e_mid", "el_e_right"]
+    },
+    {
+      "id": "lg_exit_north", "type": "exit",
+      "centerline_ids": ["cl_xn1", "cl_xn2"],
+      "edgeline_ids":   ["el_xn_left", "el_xn_mid", "el_xn_right"]
+    },
+    {
+      "id": "lg_exit_south", "type": "exit",
+      "centerline_ids": ["cl_xs1", "cl_xs2"],
+      "edgeline_ids":   ["el_xs_left", "el_xs_mid", "el_xs_right"]
+    },
+    {
+      "id": "lg_exit_east", "type": "exit",
+      "centerline_ids": ["cl_xe1", "cl_xe2"],
+      "edgeline_ids":   ["el_xe_left", "el_xe_mid", "el_xe_right"]
+    },
+    {
+      "id": "lg_exit_west", "type": "exit",
+      "centerline_ids": ["cl_xw1", "cl_xw2"],
+      "edgeline_ids":   ["el_xw_left", "el_xw_mid", "el_xw_right"]
+    }
+  ],
+  "centerlines": [
+    { "id":"cl_s1", "geom":{"type":"LineString","coordinates":[[  1.75,-30],[  1.75,-12]]}, "attrs":{"lane_type":"driving"} },
+    { "id":"cl_s2", "geom":{"type":"LineString","coordinates":[[  5.25,-30],[  5.25,-12]]}, "attrs":{"lane_type":"driving"} },
+    { "id":"cl_n1", "geom":{"type":"LineString","coordinates":[[ -1.75, 30],[ -1.75, 12]]}, "attrs":{"lane_type":"driving"} },
+    { "id":"cl_n2", "geom":{"type":"LineString","coordinates":[[ -5.25, 30],[ -5.25, 12]]}, "attrs":{"lane_type":"driving"} },
+    { "id":"cl_w1", "geom":{"type":"LineString","coordinates":[[-30,  -1.75],[-12,  -1.75]]}, "attrs":{"lane_type":"driving"} },
+    { "id":"cl_w2", "geom":{"type":"LineString","coordinates":[[-30,  -5.25],[-12,  -5.25]]}, "attrs":{"lane_type":"driving"} },
+    { "id":"cl_e1", "geom":{"type":"LineString","coordinates":[[30,   1.75],[ 12,   1.75]]}, "attrs":{"lane_type":"driving"} },
+    { "id":"cl_e2", "geom":{"type":"LineString","coordinates":[[30,   5.25],[ 12,   5.25]]}, "attrs":{"lane_type":"driving"} },
+    { "id":"cl_xn1","geom":{"type":"LineString","coordinates":[[ -1.75, 12],[ -1.75, 30]]}, "attrs":{"lane_type":"driving"} },
+    { "id":"cl_xn2","geom":{"type":"LineString","coordinates":[[ -5.25, 12],[ -5.25, 30]]}, "attrs":{"lane_type":"driving"} },
+    { "id":"cl_xs1","geom":{"type":"LineString","coordinates":[[  1.75,-12],[  1.75,-30]]}, "attrs":{"lane_type":"driving"} },
+    { "id":"cl_xs2","geom":{"type":"LineString","coordinates":[[  5.25,-12],[  5.25,-30]]}, "attrs":{"lane_type":"driving"} },
+    { "id":"cl_xe1","geom":{"type":"LineString","coordinates":[[ 12,   1.75],[ 30,   1.75]]}, "attrs":{"lane_type":"driving"} },
+    { "id":"cl_xe2","geom":{"type":"LineString","coordinates":[[ 12,   5.25],[ 30,   5.25]]}, "attrs":{"lane_type":"driving"} },
+    { "id":"cl_xw1","geom":{"type":"LineString","coordinates":[[-12,  -1.75],[-30,  -1.75]]}, "attrs":{"lane_type":"driving"} },
+    { "id":"cl_xw2","geom":{"type":"LineString","coordinates":[[-12,  -5.25],[-30,  -5.25]]}, "attrs":{"lane_type":"driving"} }
+  ],
+  "edgelines": [
+    { "id":"el_s_left",  "geom":{"type":"LineString","coordinates":[[ 0,-30],[ 0,-12]]}, "attrs":{} },
+    { "id":"el_s_mid",   "geom":{"type":"LineString","coordinates":[[ 3.5,-30],[ 3.5,-12]]}, "attrs":{} },
+    { "id":"el_s_right", "geom":{"type":"LineString","coordinates":[[ 7,-30],[ 7,-12]]}, "attrs":{} },
+    { "id":"el_n_left",  "geom":{"type":"LineString","coordinates":[[ 0, 30],[ 0, 12]]}, "attrs":{} },
+    { "id":"el_n_mid",   "geom":{"type":"LineString","coordinates":[[-3.5, 30],[-3.5, 12]]}, "attrs":{} },
+    { "id":"el_n_right", "geom":{"type":"LineString","coordinates":[[-7, 30],[-7, 12]]}, "attrs":{} },
+    { "id":"el_w_left",  "geom":{"type":"LineString","coordinates":[[-30, 0],[-12, 0]]}, "attrs":{} },
+    { "id":"el_w_mid",   "geom":{"type":"LineString","coordinates":[[-30,-3.5],[-12,-3.5]]}, "attrs":{} },
+    { "id":"el_w_right", "geom":{"type":"LineString","coordinates":[[-30,-7],[-12,-7]]}, "attrs":{} },
+    { "id":"el_e_left",  "geom":{"type":"LineString","coordinates":[[30, 0],[ 12, 0]]}, "attrs":{} },
+    { "id":"el_e_mid",   "geom":{"type":"LineString","coordinates":[[30, 3.5],[ 12, 3.5]]}, "attrs":{} },
+    { "id":"el_e_right", "geom":{"type":"LineString","coordinates":[[30, 7],[ 12, 7]]}, "attrs":{} },
+    { "id":"el_xn_left", "geom":{"type":"LineString","coordinates":[[ 0, 12],[ 0, 30]]}, "attrs":{} },
+    { "id":"el_xn_mid",  "geom":{"type":"LineString","coordinates":[[-3.5, 12],[-3.5, 30]]}, "attrs":{} },
+    { "id":"el_xn_right","geom":{"type":"LineString","coordinates":[[-7, 12],[-7, 30]]}, "attrs":{} },
+    { "id":"el_xs_left", "geom":{"type":"LineString","coordinates":[[ 0,-12],[ 0,-30]]}, "attrs":{} },
+    { "id":"el_xs_mid",  "geom":{"type":"LineString","coordinates":[[ 3.5,-12],[ 3.5,-30]]}, "attrs":{} },
+    { "id":"el_xs_right","geom":{"type":"LineString","coordinates":[[ 7,-12],[ 7,-30]]}, "attrs":{} },
+    { "id":"el_xe_left", "geom":{"type":"LineString","coordinates":[[ 12, 0],[ 30, 0]]}, "attrs":{} },
+    { "id":"el_xe_mid",  "geom":{"type":"LineString","coordinates":[[ 12, 3.5],[ 30, 3.5]]}, "attrs":{} },
+    { "id":"el_xe_right","geom":{"type":"LineString","coordinates":[[ 12, 7],[ 30, 7]]}, "attrs":{} },
+    { "id":"el_xw_left", "geom":{"type":"LineString","coordinates":[[-12, 0],[-30, 0]]}, "attrs":{} },
+    { "id":"el_xw_mid",  "geom":{"type":"LineString","coordinates":[[-12,-3.5],[-30,-3.5]]}, "attrs":{} },
+    { "id":"el_xw_right","geom":{"type":"LineString","coordinates":[[-12,-7],[-30,-7]]}, "attrs":{} }
+  ],
+  "connections": [
+    { "id":"conn_s1_xn1","enter_group_id":"lg_enter_south","exit_group_id":"lg_exit_north","enter_line_id":"cl_s1","exit_line_id":"cl_xn1","turn_type":"straight" },
+    { "id":"conn_s2_xn2","enter_group_id":"lg_enter_south","exit_group_id":"lg_exit_north","enter_line_id":"cl_s2","exit_line_id":"cl_xn2","turn_type":"straight" },
+    { "id":"conn_s1_xe1","enter_group_id":"lg_enter_south","exit_group_id":"lg_exit_east", "enter_line_id":"cl_s1","exit_line_id":"cl_xe1","turn_type":"left"     },
+    { "id":"conn_s2_xw1","enter_group_id":"lg_enter_south","exit_group_id":"lg_exit_west", "enter_line_id":"cl_s2","exit_line_id":"cl_xw1","turn_type":"right"    },
+
+    { "id":"conn_n1_xs1","enter_group_id":"lg_enter_north","exit_group_id":"lg_exit_south","enter_line_id":"cl_n1","exit_line_id":"cl_xs1","turn_type":"straight" },
+    { "id":"conn_n2_xs2","enter_group_id":"lg_enter_north","exit_group_id":"lg_exit_south","enter_line_id":"cl_n2","exit_line_id":"cl_xs2","turn_type":"straight" },
+    { "id":"conn_n1_xw1","enter_group_id":"lg_enter_north","exit_group_id":"lg_exit_west", "enter_line_id":"cl_n1","exit_line_id":"cl_xw1","turn_type":"left"     },
+    { "id":"conn_n2_xe1","enter_group_id":"lg_enter_north","exit_group_id":"lg_exit_east", "enter_line_id":"cl_n2","exit_line_id":"cl_xe1","turn_type":"right"    },
+
+    { "id":"conn_w1_xe1","enter_group_id":"lg_enter_west","exit_group_id":"lg_exit_east",  "enter_line_id":"cl_w1","exit_line_id":"cl_xe1","turn_type":"straight" },
+    { "id":"conn_w2_xe2","enter_group_id":"lg_enter_west","exit_group_id":"lg_exit_east",  "enter_line_id":"cl_w2","exit_line_id":"cl_xe2","turn_type":"straight" },
+    { "id":"conn_w1_xn1","enter_group_id":"lg_enter_west","exit_group_id":"lg_exit_north", "enter_line_id":"cl_w1","exit_line_id":"cl_xn1","turn_type":"left"     },
+    { "id":"conn_w2_xs1","enter_group_id":"lg_enter_west","exit_group_id":"lg_exit_south", "enter_line_id":"cl_w2","exit_line_id":"cl_xs1","turn_type":"right"    },
+
+    { "id":"conn_e1_xw1","enter_group_id":"lg_enter_east","exit_group_id":"lg_exit_west",  "enter_line_id":"cl_e1","exit_line_id":"cl_xw1","turn_type":"straight" },
+    { "id":"conn_e2_xw2","enter_group_id":"lg_enter_east","exit_group_id":"lg_exit_west",  "enter_line_id":"cl_e2","exit_line_id":"cl_xw2","turn_type":"straight" },
+    { "id":"conn_e1_xs1","enter_group_id":"lg_enter_east","exit_group_id":"lg_exit_south", "enter_line_id":"cl_e1","exit_line_id":"cl_xs1","turn_type":"left"     },
+    { "id":"conn_e2_xn1","enter_group_id":"lg_enter_east","exit_group_id":"lg_exit_north", "enter_line_id":"cl_e2","exit_line_id":"cl_xn1","turn_type":"right"    }
+  ],
+  "obstacles": [
+    {
+      "id":"obs_island_center",
+      "geom_type":"polygon",
+      "geom":{
+        "type":"Polygon",
+        "coordinates":[[[-2,-2],[-2,2],[2,2],[2,-2],[-2,-2]]]
+      },
+      "attrs":{"type":"median_island"}
+    }
+  ],
+  "stop_lines": [
+    { "id":"sl_south","geom":{"type":"LineString","coordinates":[[0,-12],[7,-12]]},"enter_group_id":"lg_enter_south","attrs":{} },
+    { "id":"sl_north","geom":{"type":"LineString","coordinates":[[-7,12],[0,12]]},"enter_group_id":"lg_enter_north","attrs":{} },
+    { "id":"sl_west", "geom":{"type":"LineString","coordinates":[[-12,-7],[-12,0]]},"enter_group_id":"lg_enter_west","attrs":{} },
+    { "id":"sl_east", "geom":{"type":"LineString","coordinates":[[12,0],[12,7]]},"enter_group_id":"lg_enter_east","attrs":{} }
+  ],
+  "road_edges": [
+    { "id":"re_s_left",  "geom":{"type":"LineString","coordinates":[[0,-30],[0,-12]]}, "attrs":{} },
+    { "id":"re_s_right", "geom":{"type":"LineString","coordinates":[[7,-30],[7,-12]]}, "attrs":{} },
+    { "id":"re_n_left",  "geom":{"type":"LineString","coordinates":[[0,30],[0,12]]},   "attrs":{} },
+    { "id":"re_n_right", "geom":{"type":"LineString","coordinates":[[-7,30],[-7,12]]}, "attrs":{} },
+    { "id":"re_w_left",  "geom":{"type":"LineString","coordinates":[[-30,0],[-12,0]]}, "attrs":{} },
+    { "id":"re_w_right", "geom":{"type":"LineString","coordinates":[[-30,-7],[-12,-7]]},"attrs":{} },
+    { "id":"re_e_left",  "geom":{"type":"LineString","coordinates":[[30,0],[12,0]]},   "attrs":{} },
+    { "id":"re_e_right", "geom":{"type":"LineString","coordinates":[[30,7],[12,7]]},   "attrs":{} }
+  ],
+  "rough_area": {
+    "id": "rough_area_01",
+    "geom": {
+      "type": "Polygon",
+      "coordinates":[[[-12,-12],[-12,12],[12,12],[12,-12],[-12,-12]]]
+    },
+    "attrs":{}
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "coordinate": {
+    "output_wgs84": false
+  },
+  "tangent": {
+    "mode": "last_segment",
+    "fit_points": 2
+  },
+  "connection_mode": {
+    "fan_mode": "independent",
+    "merge_at_entry_length": 0.0
+  },
+  "edge_line": {
+    "desc_mode": "fixed_offset | centerline_interp",
+    "mode": "centerline_interp",
+    "endpoint_smooth_points": 4,
+    "default_lane_width": 3.5
+  },
+  "bezier": {
+    "alpha_straight": 0.35,
+    "alpha_right": 0.30,
+    "alpha_left": 0.45,
+    "alpha_uturn": 0.50,
+    "max_curvature": 0.333,
+    "two_segment_mid_offset_ratio": 0.30
+  },
+  "sampling": {
+    "mode": "adaptive",
+    "adaptive_max_angle_deg": 0.5,
+    "adaptive_max_seg_length": 2.0,
+    "adaptive_min_seg_length": 0.05,
+    "fixed_spacing": 0.5,
+    "fixed_count": 50
+  },
+  "obstacle": {
+    "avoid": true,
+    "safe_margin": 1.75,
+    "check_spacing": 0.2,
+    "phase1_max_iter": 50,
+    "phase1_step_decay": 0.9,
+    "phase2_max_iter": 200,
+    "phase2_w_curvature": 1.0,
+    "phase2_w_length": 0.1,
+    "phase2_w_obstacle": 10.0,
+    "enable_phase2": true,
+    "enable_phase3": true,
+    "phase3_max_offset_ratio": 4.0,
+    "phase3_check_spacing": 0.15
+  },
+  "non_intersect": {
+    "corridor_min_half_width": 0.3,
+    "enable_mid_uturn_exclude": true,
+    "max_fix_iter": 20
+  },
+  "conflict": {
+    "desc_priority": "non_intersect | obstacle | both_error",
+    "priority": "non_intersect",
+    "enable_joint_optimization": false,
+    "joint_w_non_intersect": 100.0,
+    "joint_w_obstacle": 10.0
+  },
+  "intersection_polygon": {
+    "snap_tolerance": 0.5,
+    "winding": "clockwise",
+    "inter_edge_mode": "direct"
+  },
+  "output": {
+    "format": "both",
+    "output_dir": "./output",
+    "shp_encoding": "UTF-8",
+    "json_pretty": true
+  },
+  "performance": {
+    "grid_cell_count": 400,
+    "timeout_ms": 10000
+  }
+}
