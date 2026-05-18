@@ -81,6 +81,7 @@ Config loadConfig(const std::string& path){
         cfg.obstacle.enablePhase3        = jget(c,"enable_phase3",true);
         cfg.obstacle.phase3MaxOffsetRatio= jget(c,"phase3_max_offset_ratio",0.75);
         cfg.obstacle.phase3CheckSpacing  = jget(c,"phase3_check_spacing",0.15);
+        cfg.obstacle.rightSidePreferThreshold = jget(c,"right_side_prefer_threshold",2.0);
     }
     if(j.contains("non_intersect")){
         auto& c = j["non_intersect"];

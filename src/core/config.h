@@ -54,6 +54,8 @@ struct ObstacleConfig {
     bool   enablePhase3         = true;
     double phase3MaxOffsetRatio = 4.0;   // 允许最大偏移/段长比（较大可处理大障碍）
     double phase3CheckSpacing   = 0.15;
+    // 右侧通行优先：当左右绕障路径长度差 <= 此阈值时，优先选右侧绕障
+    double rightSidePreferThreshold = 2.0; // 米
 };
 
 struct NonIntersectConfig {

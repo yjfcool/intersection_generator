@@ -47,6 +47,8 @@ class LocalDetour {
     double checkSpacing_;
     // 最大允许的法线偏移/原段长比（保形约束）
     double maxOffsetRatio_ = 2.0;
+    // 右侧通行优先阈值（路径长度差 <= 此值时优先右侧）
+    double rightSidePreferThreshold_ = 2.0;
 
     // G1 拼接的角度容差（度），仅用于诊断日志
     static constexpr double G1_TOL_DEG = 1.0;
@@ -55,10 +57,12 @@ public:
     LocalDetour(const ObstacleSpatialIndex& idx,
                 double safeMargin,
                 double checkSpacing = 0.15,
-                double maxOffsetRatio = 2.0)
+                double maxOffsetRatio = 2.0,
+                double rightSidePreferThreshold = 2.0)
         : idx_(idx), safeMargin_(safeMargin)
         , checkSpacing_(checkSpacing)
         , maxOffsetRatio_(maxOffsetRatio)
+        , rightSidePreferThreshold_(rightSidePreferThreshold)
     {}
 
     // ══════════════════════════════════════════════
@@ -236,6 +240,7 @@ private:
     // ══════════════════════════════════════════════
     // 3. 构建绕障折线（核心）
     //    对两侧均尝试，选择偏移量更小的成功方案
+    //    右侧通行优先：当左右路径长度差 <= rightSidePreferThreshold_ 时优先右侧
     // ══════════════════════════════════════════════
     Polyline buildDetour(const CubicBezier& curve, const ViolInterval& iv) const
     {
@@ -249,43 +254,63 @@ private:
         Logger::debug("LocalDetour: offLeft=" + std::to_string(offL)
                     + " offRight=" + std::to_string(offR));
 
-        // 选偏移更小的方向；若两侧均失败，使用最大偏移各试一次
-        struct Candidate { Point2D dir; double off; };
-        std::vector<Candidate> cands;
-        if (offL >= 0) cands.push_back({leftDir,  offL});
-        if (offR >= 0) cands.push_back({rightDir, offR});
+        // 构建两侧的最佳绕障路径，然后根据路径长度和右侧优先规则选择
+        struct DetourCandidate {
+            Polyline pts;
+            double   pathLen = 0;
+            bool     isRight = false;
+            bool     valid   = false;
+        };
 
-        if (cands.empty()) {
+        auto tryBuild = [&](const Point2D& dir, double off, bool isRight) -> DetourCandidate {
+            DetourCandidate c;
+            c.isRight = isRight;
+            if (off < 0) return c;
+            // 两段
+            c.pts = buildTwoSeg(curve, iv, dir, off);
+            if (!c.pts.empty() && noViolation(c.pts)) { c.valid = true; c.pathLen = polylineLength(c.pts); return c; }
+            // 单段
+            c.pts = buildOneSeg(iv, dir, off);
+            if (!c.pts.empty() && noViolation(c.pts)) { c.valid = true; c.pathLen = polylineLength(c.pts); return c; }
+            // 三段
+            c.pts = buildThreeSeg(curve, iv, dir, off);
+            if (!c.pts.empty() && noViolation(c.pts)) { c.valid = true; c.pathLen = polylineLength(c.pts); return c; }
+            return c;
+        };
+
+        DetourCandidate candL = tryBuild(leftDir,  offL, false);
+        DetourCandidate candR = tryBuild(rightDir, offR, true);
+
+        // 若两侧均失败，用最大偏移再试一次
+        if (!candL.valid && !candR.valid) {
             double segLen = dist(iv.pIn, iv.pOut);
             double maxOff = segLen * maxOffsetRatio_;
-            cands.push_back({leftDir,  maxOff});
-            cands.push_back({rightDir, maxOff});
+            candL = tryBuild(leftDir,  maxOff, false);
+            candR = tryBuild(rightDir, maxOff, true);
         }
 
-        // 按偏移量从小到大排序（先尝试小变形）
-        std::sort(cands.begin(), cands.end(),
-            [](const Candidate& a, const Candidate& b){ return a.off < b.off; });
-
-        // 对每个候选，依次尝试 1/2/3 段贝塞尔；优先 2 段（自然 G1）
-        for (auto& cand : cands) {
-            // 两段（最稳健、自然 G1）
-            auto pts = buildTwoSeg(curve, iv, cand.dir, cand.off);
-            if (!pts.empty() && noViolation(pts)) {
-                logG1(iv, pts, "two-seg");
-                return pts;
+        // 决策逻辑：
+        //  - 若仅一侧有效，用那侧
+        //  - 若两侧均有效：路径长度差 <= threshold 时优先右侧；否则选较短的
+        if (candL.valid && candR.valid) {
+            double diff = candR.pathLen - candL.pathLen;
+            if (diff <= rightSidePreferThreshold_) {
+                // 右侧路径不比左侧长太多，优先右侧（右侧通行规则）
+                Logger::debug("LocalDetour: prefer right (diff=" + std::to_string(diff) + "m)");
+                logG1(iv, candR.pts, "right-prefer");
+                return candR.pts;
+            } else {
+                // 左侧明显更短，选左侧
+                Logger::debug("LocalDetour: prefer left (shorter by " + std::to_string(diff) + "m)");
+                logG1(iv, candL.pts, "left-shorter");
+                return candL.pts;
             }
-            // 单段（变形最小，但可能仍穿障）
-            pts = buildOneSeg(iv, cand.dir, cand.off);
-            if (!pts.empty() && noViolation(pts)) {
-                logG1(iv, pts, "one-seg");
-                return pts;
-            }
-            // 三段
-            pts = buildThreeSeg(curve, iv, cand.dir, cand.off);
-            if (!pts.empty() && noViolation(pts)) {
-                logG1(iv, pts, "three-seg");
-                return pts;
-            }
+        } else if (candR.valid) {
+            logG1(iv, candR.pts, "right-only");
+            return candR.pts;
+        } else if (candL.valid) {
+            logG1(iv, candL.pts, "left-only");
+            return candL.pts;
         }
         return {};
     }
