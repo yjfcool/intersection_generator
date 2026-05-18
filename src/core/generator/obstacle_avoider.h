@@ -327,7 +327,8 @@ private:
     // ══════════════════════════════════
     // Cross-check: after Phase1/2 success, try to avoid introducing new
     // intersections with existing curves. Best-effort only - never compromises
-    // obstacle avoidance.
+    // obstacle avoidance. Tries 3 interpolation points (25%, 50%, 75%)
+    // to find a viable middle-ground.
     // ══════════════════════════════════
     CubicBezier crossCheckExisting(
         const CubicBezier& original,
@@ -362,7 +363,7 @@ private:
         }
         if (origIntersects) return avoidResult; // original already intersected, can't help
 
-        // Try a reduced alpha/beta (lerp 50% between original and avoidance)
+        // Try 3 interpolation points (25%, 50%, 75%) between original and avoidance
         const Point2D& P0 = avoidResult.ctrl[0];
         const Point2D& P3 = avoidResult.ctrl[3];
         double alphaOrig  = std::max(0.10, std::min(0.85, original.getAlpha(T0)));
@@ -370,33 +371,36 @@ private:
         double alphaAvoid = std::max(0.10, std::min(0.85, avoidResult.getAlpha(T0)));
         double betaAvoid  = std::max(0.10, std::min(0.85, avoidResult.getBeta(T3)));
 
-        double alphaMid = 0.5 * (alphaOrig + alphaAvoid);
-        double betaMid  = 0.5 * (betaOrig  + betaAvoid);
+        // Try lerp factors closest to avoidance first (prefer obstacle clearance)
+        static constexpr double lerpFactors[] = {0.75, 0.50, 0.25};
 
-        CubicBezier midCurve = CubicBezier::fromAlphaBeta(P0, T0, P3, T3, alphaMid, betaMid);
-        Polyline midPts = midCurve.sampleBySpacing(cfg_.checkSpacing);
+        for (double factor : lerpFactors) {
+            double alphaLerp = alphaOrig + factor * (alphaAvoid - alphaOrig);
+            double betaLerp  = betaOrig  + factor * (betaAvoid  - betaOrig);
 
-        // Check if mid curve still avoids obstacles
-        auto viols = idx_.checkViolations(midPts, safeMargin);
-        if (!viols.empty()) {
-            // Reduced version still has obstacle violations - keep original avoidance result
-            return avoidResult;
-        }
+            CubicBezier lerpCurve = CubicBezier::fromAlphaBeta(P0, T0, P3, T3, alphaLerp, betaLerp);
+            Polyline lerpPts = lerpCurve.sampleBySpacing(cfg_.checkSpacing);
 
-        // Check if mid curve avoids intersections with existing curves
-        bool midIntersects = false;
-        for (auto& ec : existingCurves) {
-            if (polylinesIntersectExcludeEndpoints(midPts, ec)) {
-                midIntersects = true;
-                break;
+            // Check if this lerp point still avoids obstacles
+            auto viols = idx_.checkViolations(lerpPts, safeMargin);
+            if (!viols.empty()) continue; // obstacle violation - skip this factor
+
+            // Check if this lerp point avoids intersections with existing curves
+            bool lerpIntersects = false;
+            for (auto& ec : existingCurves) {
+                if (polylinesIntersectExcludeEndpoints(lerpPts, ec)) {
+                    lerpIntersects = true;
+                    break;
+                }
+            }
+            if (!lerpIntersects) {
+                Logger::debug("ObstacleAvoider: crossCheck found viable solution at lerp=" +
+                    std::to_string(factor));
+                return lerpCurve;
             }
         }
-        if (!midIntersects) {
-            Logger::debug("ObstacleAvoider: crossCheck found middle-ground avoiding both");
-            return midCurve;
-        }
 
-        // Mid still intersects - keep the avoidance result (obstacle priority)
+        // None of the interpolation points worked - keep the avoidance result (obstacle priority)
         return avoidResult;
     }
 

@@ -95,17 +95,34 @@ public:
         double alphaAdj   = alpha;
         double betaAdj    = beta;
 
-        // E. Gradual spreading weight factor
-        // For P1 (near start): use reduced gamma (spreadGradualRatio)
-        // For P2 (near end): use reduced gamma (spreadGradualRatio)
-        double spreadWeight = 1.0 - cfg_.spreadGradualRatio; // weight applied to P1/P2 offset
+        // E. Gradual spreading: positional taper near endpoints
+        // P1 is at parametric position ~alpha (near start), P2 is at ~(1-beta) (near end).
+        // Weight is reduced near endpoints (t=0, t=1) and full in the middle.
+        double taperRatio = cfg_.spreadGradualRatio; // portion of arc that gets tapered
+        auto positionalWeight = [&](double t) -> double {
+            // t=0 or t=1 -> weight=1-taperRatio (reduced)
+            // t=0.5 -> weight=1.0 (full)
+            if (t < taperRatio) {
+                return (1.0 - taperRatio) + taperRatio * (t / taperRatio);
+            } else if (t > (1.0 - taperRatio)) {
+                double dt = (t - (1.0 - taperRatio)) / taperRatio;
+                return 1.0 - taperRatio * dt;
+            }
+            return 1.0;
+        };
+
+        // P1 parametric position is approximately alpha, P2 is approximately (1-beta)
+        double weightP1 = positionalWeight(alphaAdj);
+        double weightP2 = positionalWeight(1.0 - betaAdj);
 
         auto buildCurve = [&]() -> CubicBezier {
             double ge = std::max(-gammaMaxEnter, std::min(gammaMaxEnter, gammaEnter));
             double gx = std::max(-gammaMaxExit,  std::min(gammaMaxExit,  gammaExit));
-            // Apply gradual spreading: taper gamma near endpoints
-            double geWeighted = ge * spreadWeight;
-            double gxWeighted = gx * spreadWeight;
+            // Apply positional tapering: P1 near start gets reduced offset, P2 near end too
+            weightP1 = positionalWeight(alphaAdj);
+            weightP2 = positionalWeight(1.0 - betaAdj);
+            double geWeighted = ge * weightP1;
+            double gxWeighted = gx * weightP2;
             Point2D P1 = P0 + T0 * (alphaAdj * d) + normal * geWeighted;
             Point2D P2 = P3 + T3 * (betaAdj * d)  + normal * gxWeighted;
             return CubicBezier(P0, P1, P2, P3);
@@ -138,6 +155,11 @@ public:
         Strategy currentStrat = STRAT_A;
         int stratFailCount = 0;
 
+        // Issue 1 fix: latch direction at start of each strategy phase
+        // to prevent oscillation in symmetric cases
+        double latchedDir = 0.0;
+        bool dirLatched = false;
+
         for (int iter = 0; iter < maxIter; ++iter) {
             Polyline pts = makeSample(cur, samplingMode, samplingParam);
 
@@ -154,7 +176,15 @@ public:
                 return result;
             }
 
-            double dir = computeOffsetDir(pts, conflicts);
+            double rawDir = computeOffsetDir(pts, conflicts);
+
+            // Latch direction at start of each strategy phase
+            if (!dirLatched) {
+                latchedDir = (rawDir != 0.0) ? rawDir : 1.0;
+                dirLatched = true;
+            }
+            double dir = latchedDir;
+
             double step = 0.4 * (1.0 + iter * 0.08);
 
             switch (currentStrat) {
@@ -168,6 +198,7 @@ public:
                 if (stratFailCount > maxIter / 3) {
                     currentStrat = STRAT_B;
                     stratFailCount = 0;
+                    dirLatched = false; // re-latch for new phase
                 }
                 break;
             }
@@ -179,6 +210,7 @@ public:
                 if (stratFailCount > maxIter / 3) {
                     currentStrat = STRAT_C;
                     stratFailCount = 0;
+                    dirLatched = false; // re-latch for new phase
                 }
                 break;
             }
@@ -269,6 +301,10 @@ public:
         static constexpr int MAX_POLY_ENFORCE_ITER = 20;
         double baseDisp = 0.15; // base displacement per iteration
 
+        // Latch direction at start to avoid oscillation (same fix as Bezier enforcer)
+        double latchedDir = computeDisplacementDir(current);
+        if (latchedDir == 0.0) latchedDir = 1.0;
+
         for (int iter = 0; iter < MAX_POLY_ENFORCE_ITER; ++iter) {
             // Check current state
             bool stillIntersects = false;
@@ -283,7 +319,7 @@ public:
                 return current;
             }
 
-            double dir = computeDisplacementDir(current);
+            double dir = latchedDir;
             double disp = baseDisp * (1.0 + iter * 0.15);
 
             // Apply Gaussian-weighted displacement to middle portion
@@ -293,6 +329,22 @@ public:
                 double t = (double)i / (double)(n - 1); // 0..1
                 double gaussWeight = std::exp(-0.5 * ((t - 0.5) / 0.25) * ((t - 0.5) / 0.25));
                 current[i] += normal * (dir * disp * gaussWeight);
+            }
+
+            // Smoothing pass: prevent zig-zag artifacts on short polylines
+            // Apply 1-2-1 weighted average to interior points (endpoints fixed)
+            if (n >= 4) {
+                Polyline smoothed = current;
+                int smoothPasses = (n < 8) ? 2 : 1; // more passes for shorter polylines
+                for (int sp = 0; sp < smoothPasses; ++sp) {
+                    for (int i = 1; i < n - 1; ++i) {
+                        smoothed[i] = current[i - 1] * 0.25 + current[i] * 0.5 + current[i + 1] * 0.25;
+                    }
+                    // Keep endpoints fixed
+                    smoothed[0] = current[0];
+                    smoothed[n - 1] = current[n - 1];
+                    current = smoothed;
+                }
             }
 
             // Count remaining intersections for best tracking
