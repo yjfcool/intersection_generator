@@ -1,64 +1,1414 @@
 {
   "scenario_id": "y_intersection_01",
-  "ref_point": { "lon": 116.394, "lat": 39.910 },
+  "ref_point": {
+    "lon": 116.394,
+    "lat": 39.91
+  },
   "coord_type": "projected",
   "lane_groups": [
-    { "id":"lg_enter_south", "type":"enter","centerline_ids":["cl_s1","cl_s2"],"edgeline_ids":["el_s_l","el_s_r"] },
-    { "id":"lg_enter_nw",    "type":"enter","centerline_ids":["cl_nw1","cl_nw2"],"edgeline_ids":["el_nw_l","el_nw_r"] },
-    { "id":"lg_enter_ne",    "type":"enter","centerline_ids":["cl_ne1","cl_ne2"],"edgeline_ids":["el_ne_l","el_ne_r"] },
-    { "id":"lg_exit_north_w","type":"exit", "centerline_ids":["cl_xnw1","cl_xnw2"],"edgeline_ids":["el_xnw_l","el_xnw_r"] },
-    { "id":"lg_exit_north_e","type":"exit", "centerline_ids":["cl_xne1","cl_xne2"],"edgeline_ids":["el_xne_l","el_xne_r"] },
-    { "id":"lg_exit_south",  "type":"exit", "centerline_ids":["cl_xs1","cl_xs2"],"edgeline_ids":["el_xs_l","el_xs_r"] }
+    {
+      "id": "lg_enter_south",
+      "type": "enter",
+      "centerline_ids": [
+        "cl_south1",
+        "cl_south2",
+        "cl_south3",
+        "cl_south4",
+        "cl_south5"
+      ],
+      "edgeline_ids": [
+        "el_south1_l",
+        "el_south1_r",
+        "el_south2_l",
+        "el_south2_r",
+        "el_south3_l",
+        "el_south3_r",
+        "el_south4_l",
+        "el_south4_r",
+        "el_south5_l",
+        "el_south5_r"
+      ]
+    },
+    {
+      "id": "lg_exit_south",
+      "type": "exit",
+      "centerline_ids": [
+        "cl_xsouth1",
+        "cl_xsouth2",
+        "cl_xsouth3"
+      ],
+      "edgeline_ids": [
+        "el_xsouth1_l",
+        "el_xsouth1_r",
+        "el_xsouth2_l",
+        "el_xsouth2_r",
+        "el_xsouth3_l",
+        "el_xsouth3_r"
+      ]
+    },
+    {
+      "id": "lg_enter_ne",
+      "type": "enter",
+      "centerline_ids": [
+        "cl_ne1",
+        "cl_ne2"
+      ],
+      "edgeline_ids": [
+        "el_ne1_l",
+        "el_ne1_r",
+        "el_ne2_l",
+        "el_ne2_r"
+      ]
+    },
+    {
+      "id": "lg_exit_ne",
+      "type": "exit",
+      "centerline_ids": [
+        "cl_xne1",
+        "cl_xne2"
+      ],
+      "edgeline_ids": [
+        "el_xne1_l",
+        "el_xne1_r",
+        "el_xne2_l",
+        "el_xne2_r"
+      ]
+    },
+    {
+      "id": "lg_enter_nw",
+      "type": "enter",
+      "centerline_ids": [
+        "cl_nw1",
+        "cl_nw2",
+        "cl_nw3"
+      ],
+      "edgeline_ids": [
+        "el_nw1_l",
+        "el_nw1_r",
+        "el_nw2_l",
+        "el_nw2_r",
+        "el_nw3_l",
+        "el_nw3_r"
+      ]
+    },
+    {
+      "id": "lg_exit_nw",
+      "type": "exit",
+      "centerline_ids": [
+        "cl_xnw1",
+        "cl_xnw2"
+      ],
+      "edgeline_ids": [
+        "el_xnw1_l",
+        "el_xnw1_r",
+        "el_xnw2_l",
+        "el_xnw2_r"
+      ]
+    }
   ],
   "centerlines": [
-    { "id":"cl_s1",   "geom":{"type":"LineString","coordinates":[[ 1.75,-30],[ 1.75,-10]]}, "attrs":{} },
-    { "id":"cl_s2",   "geom":{"type":"LineString","coordinates":[[ 5.25,-30],[ 5.25,-10]]}, "attrs":{} },
-    { "id":"cl_nw1",  "geom":{"type":"LineString","coordinates":[[-25, 20],[-12,  8]]},      "attrs":{} },
-    { "id":"cl_nw2",  "geom":{"type":"LineString","coordinates":[[-28, 17],[-14,  5]]},      "attrs":{} },
-    { "id":"cl_ne1",  "geom":{"type":"LineString","coordinates":[[25,  20],[ 12,  8]]},      "attrs":{} },
-    { "id":"cl_ne2",  "geom":{"type":"LineString","coordinates":[[28,  17],[ 14,  5]]},      "attrs":{} },
-    { "id":"cl_xnw1", "geom":{"type":"LineString","coordinates":[[-12,  8],[-25, 20]]},      "attrs":{} },
-    { "id":"cl_xnw2", "geom":{"type":"LineString","coordinates":[[-14,  5],[-28, 17]]},      "attrs":{} },
-    { "id":"cl_xne1", "geom":{"type":"LineString","coordinates":[[ 12,  8],[ 25, 20]]},      "attrs":{} },
-    { "id":"cl_xne2", "geom":{"type":"LineString","coordinates":[[ 14,  5],[ 28, 17]]},      "attrs":{} },
-    { "id":"cl_xs1",  "geom":{"type":"LineString","coordinates":[[ 1.75,-10],[ 1.75,-30]]}, "attrs":{} },
-    { "id":"cl_xs2",  "geom":{"type":"LineString","coordinates":[[ 5.25,-10],[ 5.25,-30]]}, "attrs":{} }
+    {
+      "id": "cl_south1",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            2.407,
+            -48.362
+          ],
+          [
+            1.854,
+            -19.968
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_south2",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            5.346,
+            -48.305
+          ],
+          [
+            4.793,
+            -19.91
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_south3",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            8.241,
+            -48.249
+          ],
+          [
+            7.688,
+            -19.854
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_south4",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            11.32,
+            -48.189
+          ],
+          [
+            10.767,
+            -19.794
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_south5",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            14.4,
+            -48.129
+          ],
+          [
+            13.847,
+            -19.734
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_xsouth1",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -1.12,
+            -20.026
+          ],
+          [
+            -0.568,
+            -48.42
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_xsouth2",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -4.05,
+            -20.083
+          ],
+          [
+            -3.497,
+            -48.477
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_xsouth3",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -7.034,
+            -20.141
+          ],
+          [
+            -6.481,
+            -48.535
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_ne1",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            31.921,
+            20.87
+          ],
+          [
+            16.345,
+            11.651
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_ne2",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            30.329,
+            23.559
+          ],
+          [
+            14.753,
+            14.34
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_xne1",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            17.937,
+            8.961
+          ],
+          [
+            33.513,
+            18.181
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_xne2",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            19.529,
+            6.272
+          ],
+          [
+            35.104,
+            15.492
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_nw1",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -32.382,
+            10.808
+          ],
+          [
+            -19.234,
+            5.716
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_nw2",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -33.523,
+            7.861
+          ],
+          [
+            -20.375,
+            2.769
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_nw3",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -34.661,
+            4.923
+          ],
+          [
+            -21.512,
+            -0.168
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_xnw1",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -18.078,
+            8.7
+          ],
+          [
+            -31.227,
+            13.792
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    },
+    {
+      "id": "cl_xnw2",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -16.883,
+            11.787
+          ],
+          [
+            -30.031,
+            16.878
+          ]
+        ]
+      },
+      "attrs": {
+        "lane_type": "driving"
+      }
+    }
   ],
   "edgelines": [
-    { "id":"el_s_l",   "geom":{"type":"LineString","coordinates":[[ 0,-30],[ 0,-10]]},     "attrs":{} },
-    { "id":"el_s_r",   "geom":{"type":"LineString","coordinates":[[ 7,-30],[ 7,-10]]},     "attrs":{} },
-    { "id":"el_nw_l",  "geom":{"type":"LineString","coordinates":[[-22, 23],[-9, 11]]},    "attrs":{} },
-    { "id":"el_nw_r",  "geom":{"type":"LineString","coordinates":[[-31, 14],[-17,  2]]},   "attrs":{} },
-    { "id":"el_ne_l",  "geom":{"type":"LineString","coordinates":[[22, 23],[ 9, 11]]},     "attrs":{} },
-    { "id":"el_ne_r",  "geom":{"type":"LineString","coordinates":[[31, 14],[17,  2]]},     "attrs":{} },
-    { "id":"el_xnw_l", "geom":{"type":"LineString","coordinates":[[-9, 11],[-22, 23]]},   "attrs":{} },
-    { "id":"el_xnw_r", "geom":{"type":"LineString","coordinates":[[-17,  2],[-31, 14]]},  "attrs":{} },
-    { "id":"el_xne_l", "geom":{"type":"LineString","coordinates":[[ 9, 11],[ 22, 23]]},   "attrs":{} },
-    { "id":"el_xne_r", "geom":{"type":"LineString","coordinates":[[ 17,  2],[ 31, 14]]},  "attrs":{} },
-    { "id":"el_xs_l",  "geom":{"type":"LineString","coordinates":[[ 0,-10],[ 0,-30]]},    "attrs":{} },
-    { "id":"el_xs_r",  "geom":{"type":"LineString","coordinates":[[ 7,-10],[ 7,-30]]},    "attrs":{} }
+    {
+      "id": "el_south1_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            0.942,
+            -48.391
+          ],
+          [
+            0.389,
+            -19.996
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_south1_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            3.872,
+            -48.334
+          ],
+          [
+            3.319,
+            -19.939
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_south2_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            3.872,
+            -48.334
+          ],
+          [
+            3.319,
+            -19.939
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_south2_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            6.821,
+            -48.276
+          ],
+          [
+            6.268,
+            -19.882
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_south3_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            6.821,
+            -48.276
+          ],
+          [
+            6.268,
+            -19.882
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_south3_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            9.66,
+            -48.221
+          ],
+          [
+            9.108,
+            -19.826
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_south4_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            9.66,
+            -48.221
+          ],
+          [
+            9.108,
+            -19.826
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_south4_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            12.98,
+            -48.156
+          ],
+          [
+            12.427,
+            -19.762
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_south5_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            12.98,
+            -48.156
+          ],
+          [
+            12.427,
+            -19.762
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_south5_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            15.819,
+            -48.101
+          ],
+          [
+            15.266,
+            -19.707
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_xsouth1_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            0.389,
+            -19.996
+          ],
+          [
+            0.942,
+            -48.391
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_xsouth1_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -2.63,
+            -20.055
+          ],
+          [
+            -2.077,
+            -48.45
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_xsouth2_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -2.63,
+            -20.055
+          ],
+          [
+            -2.077,
+            -48.45
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_xsouth2_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -5.47,
+            -20.11
+          ],
+          [
+            -4.917,
+            -48.505
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_xsouth3_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -5.47,
+            -20.11
+          ],
+          [
+            -4.917,
+            -48.505
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_xsouth3_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.599,
+            -20.171
+          ],
+          [
+            -8.046,
+            -48.566
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_ne1_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            32.787,
+            19.407
+          ],
+          [
+            17.211,
+            10.188
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_ne1_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            31.055,
+            22.333
+          ],
+          [
+            15.479,
+            13.113
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_ne2_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            31.055,
+            22.333
+          ],
+          [
+            15.479,
+            13.113
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_ne2_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            29.603,
+            24.786
+          ],
+          [
+            14.027,
+            15.566
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_xne1_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            17.211,
+            10.188
+          ],
+          [
+            32.787,
+            19.407
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_xne1_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.663,
+            7.735
+          ],
+          [
+            34.238,
+            16.955
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_xne2_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.663,
+            7.735
+          ],
+          [
+            34.238,
+            16.955
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_xne2_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            20.394,
+            4.809
+          ],
+          [
+            35.97,
+            14.029
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_nw1_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -31.799,
+            12.314
+          ],
+          [
+            -18.651,
+            7.222
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_nw1_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -32.965,
+            9.302
+          ],
+          [
+            -19.817,
+            4.21
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_nw2_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -32.965,
+            9.302
+          ],
+          [
+            -19.817,
+            4.21
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_nw2_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -34.081,
+            6.42
+          ],
+          [
+            -20.933,
+            1.329
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_nw3_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -34.081,
+            6.42
+          ],
+          [
+            -20.933,
+            1.329
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_nw3_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -35.24,
+            3.427
+          ],
+          [
+            -22.092,
+            -1.665
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_xnw1_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -18.651,
+            7.222
+          ],
+          [
+            -31.799,
+            12.314
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_xnw1_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -17.506,
+            10.178
+          ],
+          [
+            -30.654,
+            15.27
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_xnw2_l",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -17.506,
+            10.178
+          ],
+          [
+            -30.654,
+            15.27
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "el_xnw2_r",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -16.26,
+            13.395
+          ],
+          [
+            -29.409,
+            18.487
+          ]
+        ]
+      },
+      "attrs": {}
+    }
   ],
   "connections": [
-    { "id":"conn_s1_xne1","enter_group_id":"lg_enter_south","exit_group_id":"lg_exit_north_e","enter_line_id":"cl_s1","exit_line_id":"cl_xne1","turn_type":"left"   },
-    { "id":"conn_s2_xnw1","enter_group_id":"lg_enter_south","exit_group_id":"lg_exit_north_w","enter_line_id":"cl_s2","exit_line_id":"cl_xnw1","turn_type":"right"  },
-    { "id":"conn_nw1_xs1","enter_group_id":"lg_enter_nw",   "exit_group_id":"lg_exit_south",  "enter_line_id":"cl_nw1","exit_line_id":"cl_xs1","turn_type":"right"  },
-    { "id":"conn_nw1_xne1","enter_group_id":"lg_enter_nw",  "exit_group_id":"lg_exit_north_e","enter_line_id":"cl_nw1","exit_line_id":"cl_xne1","turn_type":"straight"},
-    { "id":"conn_ne1_xs1","enter_group_id":"lg_enter_ne",   "exit_group_id":"lg_exit_south",  "enter_line_id":"cl_ne1","exit_line_id":"cl_xs1","turn_type":"left"   },
-    { "id":"conn_ne1_xnw1","enter_group_id":"lg_enter_ne",  "exit_group_id":"lg_exit_north_w","enter_line_id":"cl_ne1","exit_line_id":"cl_xnw1","turn_type":"straight"}
+    {
+      "id": "conn_001",
+      "enter_group_id": "lg_enter_south",
+      "exit_group_id": "lg_exit_ne",
+      "enter_line_id": "cl_south5",
+      "exit_line_id": "cl_xne1",
+      "turn_type": "right"
+    },
+    {
+      "id": "conn_002",
+      "enter_group_id": "lg_enter_south",
+      "exit_group_id": "lg_exit_ne",
+      "enter_line_id": "cl_south4",
+      "exit_line_id": "cl_xne2",
+      "turn_type": "right"
+    },
+    {
+      "id": "conn_003",
+      "enter_group_id": "lg_enter_south",
+      "exit_group_id": "lg_exit_nw",
+      "enter_line_id": "cl_south1",
+      "exit_line_id": "cl_xnw1",
+      "turn_type": "left"
+    },
+    {
+      "id": "conn_004",
+      "enter_group_id": "lg_enter_south",
+      "exit_group_id": "lg_exit_nw",
+      "enter_line_id": "cl_south2",
+      "exit_line_id": "cl_xnw2",
+      "turn_type": "left"
+    },
+    {
+      "id": "conn_005",
+      "enter_group_id": "lg_enter_ne",
+      "exit_group_id": "lg_exit_south",
+      "enter_line_id": "cl_ne1",
+      "exit_line_id": "cl_xsouth1",
+      "turn_type": "left"
+    },
+    {
+      "id": "conn_006",
+      "enter_group_id": "lg_enter_ne",
+      "exit_group_id": "lg_exit_south",
+      "enter_line_id": "cl_ne2",
+      "exit_line_id": "cl_xsouth2",
+      "turn_type": "left"
+    },
+    {
+      "id": "conn_007",
+      "enter_group_id": "lg_enter_ne",
+      "exit_group_id": "lg_exit_ne",
+      "enter_line_id": "cl_ne1",
+      "exit_line_id": "cl_xne1",
+      "turn_type": "uturn"
+    },
+    {
+      "id": "conn_008",
+      "enter_group_id": "lg_enter_ne",
+      "exit_group_id": "lg_exit_nw",
+      "enter_line_id": "cl_ne2",
+      "exit_line_id": "cl_xnw1",
+      "turn_type": "right"
+    },
+    {
+      "id": "conn_009",
+      "enter_group_id": "lg_enter_ne",
+      "exit_group_id": "lg_exit_nw",
+      "enter_line_id": "cl_ne1",
+      "exit_line_id": "cl_xnw2",
+      "turn_type": "right"
+    },
+    {
+      "id": "conn_010",
+      "enter_group_id": "lg_enter_nw",
+      "exit_group_id": "lg_exit_south",
+      "enter_line_id": "cl_nw3",
+      "exit_line_id": "cl_xsouth1",
+      "turn_type": "right"
+    },
+    {
+      "id": "conn_011",
+      "enter_group_id": "lg_enter_nw",
+      "exit_group_id": "lg_exit_south",
+      "enter_line_id": "cl_nw2",
+      "exit_line_id": "cl_xsouth2",
+      "turn_type": "right"
+    },
+    {
+      "id": "conn_012",
+      "enter_group_id": "lg_enter_nw",
+      "exit_group_id": "lg_exit_ne",
+      "enter_line_id": "cl_nw1",
+      "exit_line_id": "cl_xne1",
+      "turn_type": "left"
+    },
+    {
+      "id": "conn_013",
+      "enter_group_id": "lg_enter_nw",
+      "exit_group_id": "lg_exit_ne",
+      "enter_line_id": "cl_nw2",
+      "exit_line_id": "cl_xne2",
+      "turn_type": "left"
+    }
   ],
-  "obstacles": [],
+  "obstacles": [
+    {
+      "id": "obs_1",
+      "geom_type": "polygon",
+      "geom": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -0.376,
+              -4.057
+            ],
+            [
+              -1.583,
+              -1.545
+            ],
+            [
+              -4.423,
+              -2.334
+            ],
+            [
+              -4.161,
+              -5.721
+            ],
+            [
+              -1.83,
+              -6.458
+            ],
+            [
+              -0.376,
+              -4.057
+            ]
+          ]
+        ]
+      },
+      "attrs": {
+        "type": "median_island"
+      }
+    }
+  ],
   "stop_lines": [],
   "road_edges": [
-    { "id":"re_s_l",  "geom":{"type":"LineString","coordinates":[[ 0,-30],[ 0,-10]]},   "attrs":{} },
-    { "id":"re_s_r",  "geom":{"type":"LineString","coordinates":[[ 7,-30],[ 7,-10]]},   "attrs":{} },
-    { "id":"re_nw_l", "geom":{"type":"LineString","coordinates":[[-22,23],[-9,11]]},    "attrs":{} },
-    { "id":"re_nw_r", "geom":{"type":"LineString","coordinates":[[-31,14],[-17,2]]},    "attrs":{} },
-    { "id":"re_ne_l", "geom":{"type":"LineString","coordinates":[[22,23],[9,11]]},      "attrs":{} },
-    { "id":"re_ne_r", "geom":{"type":"LineString","coordinates":[[31,14],[17,2]]},      "attrs":{} }
+    {
+      "id": "re_south_enter_inner",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            0.942,
+            -48.391
+          ],
+          [
+            0.389,
+            -19.996
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "re_south_enter_outer",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            15.819,
+            -48.101
+          ],
+          [
+            15.266,
+            -19.707
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "re_south_exit_inner",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            0.389,
+            -19.996
+          ],
+          [
+            0.942,
+            -48.391
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "re_south_exit_outer",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.599,
+            -20.171
+          ],
+          [
+            -8.046,
+            -48.566
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "re_ne_enter_inner",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            32.787,
+            19.407
+          ],
+          [
+            17.211,
+            10.188
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "re_ne_enter_outer",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            29.603,
+            24.786
+          ],
+          [
+            14.027,
+            15.566
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "re_ne_exit_inner",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            17.211,
+            10.188
+          ],
+          [
+            32.787,
+            19.407
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "re_ne_exit_outer",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            20.394,
+            4.809
+          ],
+          [
+            35.97,
+            14.029
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "re_nw_enter_inner",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -31.799,
+            12.314
+          ],
+          [
+            -18.651,
+            7.222
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "re_nw_enter_outer",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -35.24,
+            3.427
+          ],
+          [
+            -22.092,
+            -1.665
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "re_nw_exit_inner",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -18.651,
+            7.222
+          ],
+          [
+            -31.799,
+            12.314
+          ]
+        ]
+      },
+      "attrs": {}
+    },
+    {
+      "id": "re_nw_exit_outer",
+      "geom": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -16.26,
+            13.395
+          ],
+          [
+            -29.409,
+            18.487
+          ]
+        ]
+      },
+      "attrs": {}
+    }
   ],
   "rough_area": {
-    "id":"rough_01",
-    "geom":{"type":"Polygon","coordinates":[[[-15,-10],[-15,12],[0,15],[15,12],[15,-10],[-15,-10]]]},
-    "attrs":{}
+    "id": "rough_01",
+    "geom": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            24.0,
+            0.0
+          ],
+          [
+            16.971,
+            16.971
+          ],
+          [
+            0.0,
+            24.0
+          ],
+          [
+            -16.971,
+            16.971
+          ],
+          [
+            -24.0,
+            0.0
+          ],
+          [
+            -16.971,
+            -16.971
+          ],
+          [
+            -0.0,
+            -24.0
+          ],
+          [
+            16.971,
+            -16.971
+          ],
+          [
+            24.0,
+            0.0
+          ]
+        ]
+      ]
+    },
+    "attrs": {}
   }
 }

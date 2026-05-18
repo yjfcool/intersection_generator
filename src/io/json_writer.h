@@ -45,6 +45,8 @@ public:
             item["geom"]         = polylineToJson(cl.geom, "LineString");
             item["quality_flags"]= cl.qualityFlags;
             item["warnings"]     = cl.warnDesc;
+            item["left_edgeline_id"]  = cl.leftEdgelineId;
+            item["right_edgeline_id"] = cl.rightEdgelineId;
             clArr.push_back(item);
         }
         j["centerlines"] = clArr;
@@ -53,11 +55,11 @@ public:
         json elArr = json::array();
         for(auto& el : out.edgelines){
             json item;
-            item["id"]                 = el.id;
-            item["left_centerline_id"] = el.leftCenterlineId;
-            item["right_centerline_id"]= el.rightCenterlineId;
-            item["geom"]               = polylineToJson(el.geom, "LineString");
-            item["quality_flags"]      = el.qualityFlags;
+            item["id"]              = el.id;
+            item["centerline_id"]   = el.centerlineId;
+            item["side"]            = el.side;
+            item["geom"]            = polylineToJson(el.geom, "LineString");
+            item["quality_flags"]   = el.qualityFlags;
             elArr.push_back(item);
         }
         j["edgelines"] = elArr;

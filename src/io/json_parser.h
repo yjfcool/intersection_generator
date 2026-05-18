@@ -53,8 +53,6 @@ public:
                 LaneEdgeLine el;
                 el.id                 = jstr(item,"id","");
                 el.geom               = parsePolyline(item["geom"]);
-                el.leftCenterlineId   = jstr(item,"left_centerline_id","");
-                el.rightCenterlineId  = jstr(item,"right_centerline_id","");
                 el.attrs              = parseAttrs(item);
                 inp.edgelines[el.id] = el;
             }

@@ -122,6 +122,9 @@ public:
     }
 
     // 通过 α,β 参数重新设置内部控制点（保持端点和切线方向）
+    // 约定：T0 指向路口内（进入方向）；T3 指向路口内（退出方向的进入端）
+    // 即 init() 的约定：P1 = P0 + T0*alpha*d, P2 = P3 + T3*beta*d
+    // 这样 B'(1) = 3*(P3-P2) = -3*T3*beta*d，方向为 -T3（出路口外）
     static CubicBezier fromAlphaBeta(
         const Point2D& P0, const Point2D& T0,
         const Point2D& P3, const Point2D& T3,
@@ -129,7 +132,7 @@ public:
     {
         double d = dist(P0, P3);
         Point2D P1 = P0 + T0 * (alpha * d);
-        Point2D P2 = P3 - T3 * (beta  * d); // T3指向路口内，G1：B'(1)=3(P3-P2)与T3同向
+        Point2D P2 = P3 + T3 * (beta  * d); // 与 ControlPointInit::init 保持一致
         return CubicBezier(P0, P1, P2, P3);
     }
 

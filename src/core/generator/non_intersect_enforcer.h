@@ -22,8 +22,8 @@ struct EnforceResult {
 class NonIntersectEnforcer {
     const NonIntersectConfig& cfg_;
 
-    // 最大允许G1角度（度）
-    static constexpr double MAX_G1_DEG = 5.0;
+    // 最大允许G1角度（度）— 放宽以允许更大的非相交偏移
+    static constexpr double MAX_G1_DEG = 30.0;
 
 public:
     explicit NonIntersectEnforcer(const NonIntersectConfig& cfg) : cfg_(cfg) {}
@@ -104,10 +104,19 @@ public:
             Point2D myMid = cur.eval(0.5);
             Point2D cfMid = (*worst)[worst->size()/2];
             double  side  = (myMid - cfMid).dot(normal);
-            double  step  = 0.15 * (1.0 + iter * 0.05);
+            double  step  = 0.5 * (1.0 + iter * 0.15);
 
             if (side >= 0) { gammaEnter += step; gammaExit += step; }
             else           { gammaEnter -= step; gammaExit -= step; }
+
+            // 如果 gamma 达到上限，尝试缩短 alpha/beta 以减小曲线占用的横向空间
+            if (std::abs(gammaEnter) > gammaMaxEnter * 0.9 ||
+                std::abs(gammaExit) > gammaMaxExit * 0.9) {
+                alpha = std::max(0.15, alpha - 0.02);
+                beta  = std::max(0.15, beta  - 0.02);
+                gammaMaxEnter = alpha * d * std::tan(MAX_G1_DEG * DEG2RAD);
+                gammaMaxExit  = beta  * d * std::tan(MAX_G1_DEG * DEG2RAD);
+            }
 
             cur = buildCurve();
         }
@@ -146,10 +155,12 @@ private:
             const Connection* oc=nullptr;
             for (auto& c:inp.connections) if(c.id==gcl.connectionId){oc=&c;break;}
             if (!oc) continue;
-            bool rel = (oc->enterGroupId==conn.enterGroupId)
-                     ||(oc->exitGroupId ==conn.exitGroupId)
-                     ||(oc->enterLineId ==conn.enterLineId)
-                     ||(oc->exitLineId  ==conn.exitLineId);
+            // 判定为冲突的条件：
+            // 同向曲线（同进入组同退出组）的曲线必须不相交（如并行直行）
+            // 共享进入线但不同退出方向的曲线（如直行+右转从同一车道）在路口内
+            // 自然分叉，不作为非相交冲突（它们在出口自然分离）
+            bool sameDirection = (oc->enterGroupId==conn.enterGroupId && oc->exitGroupId==conn.exitGroupId);
+            bool rel = sameDirection;
             if (rel) res.push_back(&gcl.geom);
         }
         return res;

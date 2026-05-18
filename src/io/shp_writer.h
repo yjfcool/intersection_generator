@@ -71,6 +71,8 @@ public:
             makeField("LANE_ORDER",  'C', 64, 0),
             makeField("GROUP_ID",'C', 64, 0),
             makeField("GROUP_TYPE",'C', 64, 0),
+            makeField("LEFT_EID",'C', 64, 0),
+            makeField("RIGHT_EID",'C', 64, 0),
         };
         std::vector<Record> records;
         for(auto idcl : centerlines){
@@ -82,7 +84,9 @@ public:
                 cl.id,
                 std::to_string(cl.laneOrder),
                 cl.groupId,
-                cl.groupType == GroupType::ENTER ? "enter" : "exit"
+                cl.groupType == GroupType::ENTER ? "enter" : "exit",
+                cl.leftEdgelineId,
+                cl.rightEdgelineId
             };
             records.push_back(r);
         }
@@ -96,8 +100,7 @@ public:
             makeField("ID",       'C', 64, 0),
             makeField("GROUP_ID",'C', 64, 0),
             makeField("GROUP_TYPE",'C', 64, 0),
-            makeField("LEFT_CLINE_ID",'C', 64, 0),
-            makeField("RIGHT_CLINE_ID",'C', 64, 0),
+            makeField("LINE_ORDER",'C', 64, 0),
         };
         std::vector<Record> records;
         for(auto idel : edgelines){
@@ -109,8 +112,7 @@ public:
                 el.id,
                 el.groupId,
                 el.groupType == GroupType::ENTER ? "enter" : "exit",
-                el.leftCenterlineId,
-                el.rightCenterlineId
+                std::to_string(el.lineOrder)
             };
             records.push_back(r);
         }
@@ -210,6 +212,8 @@ public:
             makeField("TURN_TYPE",'C', 20, 0),
             makeField("QUALITY",  'N',  6, 0),
             makeField("WARN_DESC",'C',200, 0),
+            makeField("LEFT_EL",  'C', 64, 0),
+            makeField("RIGHT_EL", 'C', 64, 0),
         };
 
         std::vector<Record> records;
@@ -224,7 +228,9 @@ public:
                 cl.exitLineId,
                 turnTypeStr(cl.turnType),
                 std::to_string(cl.qualityFlags),
-                cl.warnDesc.substr(0, 199)
+                cl.warnDesc.substr(0, 199),
+                cl.leftEdgelineId,
+                cl.rightEdgelineId
             };
             records.push_back(r);
         }
@@ -241,8 +247,8 @@ public:
 
         std::vector<Field> fields = {
             makeField("ID",        'C', 64, 0),
-            makeField("LEFT_CL",   'C', 64, 0),
-            makeField("RIGHT_CL",  'C', 64, 0),
+            makeField("CL_ID",     'C', 64, 0),
+            makeField("SIDE",      'C', 10, 0),
             makeField("QUALITY",   'N',  6, 0),
         };
 
@@ -253,8 +259,8 @@ public:
             r.isPolygon = false;
             r.values = {
                 el.id,
-                el.leftCenterlineId,
-                el.rightCenterlineId,
+                el.centerlineId,
+                el.side,
                 std::to_string(el.qualityFlags)
             };
             records.push_back(r);
