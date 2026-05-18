@@ -113,9 +113,10 @@ private:
         }
     }
 
-    // 计算生成优先级：直行=0, 右转内→外=1..N, 左转内→外, 调头
+    // Compute generation priority: straight=0 (baseline), right from baseline outward,
+    // left from baseline outward, U-turns last. Within same type, spread by laneOrder.
     static void assignPriority(IntersectionInput& inp){
-        // 按进入组分组
+        // Group connections by enter group
         std::unordered_map<std::string, std::vector<int>> groupConnMap;
         for(int i=0;i<(int)inp.connections.size();++i){
             groupConnMap[inp.connections[i].enterGroupId].push_back(i);
@@ -125,10 +126,9 @@ private:
             auto git = inp.laneGroups.find(gid);
             if(git==inp.laneGroups.end()) continue;
 
-            // 对同一组内的连通关系按 转向类型+车道序 排序优先级
-            // 直行(0) < 右转按order升序(1..) < 左转按order升序 < 调头
+            // Base priority by turn type (straight-first baseline)
             auto getPriBase = [](TurnType t, bool isMid) -> int {
-                if(isMid) return 1000; // 中间调头放最后
+                if(isMid) return 1000; // mid-U-turn placed last
                 switch(t){
                     case TurnType::STRAIGHT:     return 0;
                     case TurnType::RIGHT:        return 100;
@@ -139,11 +139,38 @@ private:
                 }
             };
 
+            // Find the straight connection with minimum laneOrder (baseline)
+            int baselineOrder = 0;
+            bool foundStraight = false;
+            for(int ci : idxList){
+                Connection& conn = inp.connections[ci];
+                if(conn.turnType == TurnType::STRAIGHT && !conn.isMidUturn){
+                    auto clit = inp.centerlines.find(conn.enterLineId);
+                    int order = (clit!=inp.centerlines.end()) ? clit->second.laneOrder : 0;
+                    if(!foundStraight || order < baselineOrder){
+                        baselineOrder = order;
+                        foundStraight = true;
+                    }
+                }
+            }
+
             for(int ci : idxList){
                 Connection& conn = inp.connections[ci];
                 auto clit = inp.centerlines.find(conn.enterLineId);
                 int order = (clit!=inp.centerlines.end()) ? clit->second.laneOrder : 0;
-                conn.lateralPriority = getPriBase(conn.turnType, conn.isMidUturn) + order;
+
+                int basePri = getPriBase(conn.turnType, conn.isMidUturn);
+
+                // For right-side types, spread outward from baseline (increasing order)
+                // For left-side types, spread outward from baseline (increasing order)
+                int spreadOrder = order;
+                if(foundStraight){
+                    // Distance from baseline determines sub-priority
+                    int delta = std::abs(order - baselineOrder);
+                    spreadOrder = delta;
+                }
+
+                conn.lateralPriority = basePri + spreadOrder;
             }
         }
     }

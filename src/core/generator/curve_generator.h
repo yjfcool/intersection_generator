@@ -136,18 +136,19 @@ private:
                 ptsAfterAvoid = sampleCurve(avoidRes.curve);
             }
 
-            // 非相交约束（Phase3局部绕障时降级：只做轻量检测，不强制修复）
+            // Non-intersection enforcement (Phase3 local detour degrades: lightweight check only)
             if (localDetourActive) {
-                // 绕障段非相交降级：直接使用绕障折线，不执行enforce
+                // Detour segment: use detour polyline directly, no enforce
                 ptsAfterEnforce = ptsAfterAvoid;
-                // 仍做检测以便标记
+                // Still detect to flag
                 for (auto& gcl : existing) {
                     if (polylinesIntersectExcludeEndpoints(ptsAfterEnforce, gcl.geom)) {
                         interViol1 = true; break;
                     }
                 }
-                qualFlags |= QF_INFO_TWO_SEGMENT_USED; // 复用标志位表示局部绕障
+                qualFlags |= QF_INFO_TWO_SEGMENT_USED;
             } else {
+                // Pass all existing curves; enforcer's collectConflicts filters internally
                 auto enforceRes = enforcer.enforce(
                     avoidRes.curve, corridor, existing, conn, inp,
                     T0, T3,

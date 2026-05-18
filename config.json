@@ -50,7 +50,11 @@
   "non_intersect": {
     "corridor_min_half_width": 0.3,
     "enable_mid_uturn_exclude": true,
-    "max_fix_iter": 20
+    "max_fix_iter": 20,
+    "allow_uturn_intersect": true,
+    "extreme_cross_angle_threshold": 150.0,
+    "spread_gradual_ratio": 0.3,
+    "global_max_iter": 80
   },
   "conflict": {
     "desc_priority": "non_intersect | obstacle | both_error",

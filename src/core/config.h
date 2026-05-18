@@ -62,6 +62,10 @@ struct NonIntersectConfig {
     double corridorMinHalfWidth  = 0.3;
     bool   enableMidUturnExclude = true;
     int    maxFixIter = 60;
+    bool   allowUturnIntersect = true;        // whether U-turn curves can intersect each other
+    double extremeCrossAngleThreshold = 150.0; // degrees - skip NI for extreme crossings
+    double spreadGradualRatio = 0.3;          // taper ratio at curve endpoints
+    int    globalMaxIter = 80;                // max iterations for multi-strategy solver
 };
 
 struct ConflictConfig {
