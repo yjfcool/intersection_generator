@@ -61,7 +61,7 @@ struct ObstacleConfig {
 struct NonIntersectConfig {
     double corridorMinHalfWidth  = 0.3;
     bool   enableMidUturnExclude = true;
-    int    maxFixIter = 20;
+    int    maxFixIter = 60;
 };
 
 struct ConflictConfig {
