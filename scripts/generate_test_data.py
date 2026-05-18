@@ -155,10 +155,14 @@ def generate_arm_geometry(arm: ArmConfig) -> Dict[str, Any]:
     """
     Generate centerlines, edgelines, and road edges for one arm.
 
-    Convention:
+    Convention (right-hand traffic):
     - The arm extends along a direction given by arm.angle_deg from origin.
-    - Enter lanes are on the RIGHT side of the arm direction (approaching traffic).
-    - Exit lanes are on the LEFT side of the arm direction (departing traffic).
+    - arm direction points AWAY from intersection center.
+    - Vehicles ENTERING the intersection travel OPPOSITE to arm direction.
+    - For right-hand traffic, entering vehicles are on their RIGHT side of the road.
+    - From the arm's away-direction perspective:
+        Enter lanes are to the LEFT (positive perpendicular) — driver's right when approaching
+        Exit lanes are to the RIGHT (negative perpendicular) — driver's right when departing
     - Enter lines: far endpoint -> near endpoint (towards intersection)
     - Exit lines: near endpoint -> far endpoint (away from intersection)
 
@@ -178,8 +182,14 @@ def generate_arm_geometry(arm: ArmConfig) -> Dict[str, Any]:
     far_dist = arm.arm_length
 
     # Median is at offset 0 in perpendicular direction
-    # Enter lanes are to the RIGHT of direction (negative perpendicular)
-    # Exit lanes are to the LEFT of direction (positive perpendicular)
+    # For right-hand traffic rule:
+    #   The arm direction points AWAY from intersection.
+    #   A vehicle ENTERING the intersection travels OPPOSITE to the arm direction.
+    #   From the entering driver's perspective, they should be on the RIGHT side of the road.
+    #   Driver's right = LEFT of the arm's away-direction (positive perpendicular).
+    # Therefore:
+    #   Enter lanes are to the LEFT of arm away-direction (positive perpendicular)
+    #   Exit lanes are to the RIGHT of arm away-direction (negative perpendicular)
 
     result = {
         "enter_centerlines": [],
@@ -192,13 +202,13 @@ def generate_arm_geometry(arm: ArmConfig) -> Dict[str, Any]:
 
     dir_abbr = arm.direction_name
 
-    # --- Enter lanes (right side = negative perpendicular) ---
+    # --- Enter lanes (left side of away-direction = positive perpendicular) ---
     enter_offsets = compute_lane_offsets(arm.enter_widths)
     enter_edge_offsets = compute_edge_offsets(arm.enter_widths)
 
     for i, offset in enumerate(enter_offsets):
-        # Offset in negative perpendicular direction
-        perp_offset = -(offset)  # negative = right side
+        # Offset in positive perpendicular direction (left of away = right of approaching driver)
+        perp_offset = offset  # positive = left of away-direction = driver's right
         # Near point (close to intersection)
         near_x = dx * near_dist + px * perp_offset
         near_y = dy * near_dist + py * perp_offset
@@ -218,7 +228,7 @@ def generate_arm_geometry(arm: ArmConfig) -> Dict[str, Any]:
 
     # Enter edgelines
     for i, offset in enumerate(enter_edge_offsets):
-        perp_offset = -(offset)
+        perp_offset = offset  # positive = left of away = driver's right
         near_x = dx * near_dist + px * perp_offset
         near_y = dy * near_dist + py * perp_offset
         far_x = dx * far_dist + px * perp_offset
@@ -236,12 +246,9 @@ def generate_arm_geometry(arm: ArmConfig) -> Dict[str, Any]:
             "attrs": {}
         })
 
-    # Enter road edges (outermost left and right)
-    # Left edge = median side (offset 0)
-    for edge_side, offset in [("l", 0.0), ("r", -total_width(arm.enter_widths))]:
-        perp_offset = offset if edge_side == "l" else -(total_width(arm.enter_widths))
-        if edge_side == "l":
-            perp_offset = 0.0
+    # Enter road edges (innermost = median side, outermost = far from median)
+    # Median edge at offset 0; outer edge at +total_width (positive perp direction)
+    for edge_side, perp_offset in [("inner", 0.0), ("outer", total_width(arm.enter_widths))]:
         near_x = dx * near_dist + px * perp_offset
         near_y = dy * near_dist + py * perp_offset
         far_x = dx * far_dist + px * perp_offset
@@ -256,12 +263,12 @@ def generate_arm_geometry(arm: ArmConfig) -> Dict[str, Any]:
             "attrs": {}
         })
 
-    # --- Exit lanes (left side = positive perpendicular) ---
+    # --- Exit lanes (right side of away-direction = negative perpendicular) ---
     exit_offsets = compute_lane_offsets(arm.exit_widths)
     exit_edge_offsets = compute_edge_offsets(arm.exit_widths)
 
     for i, offset in enumerate(exit_offsets):
-        perp_offset = offset  # positive = left side
+        perp_offset = -(offset)  # negative = right of away-direction = driver's right when exiting
         near_x = dx * near_dist + px * perp_offset
         near_y = dy * near_dist + py * perp_offset
         far_x = dx * far_dist + px * perp_offset
@@ -279,7 +286,7 @@ def generate_arm_geometry(arm: ArmConfig) -> Dict[str, Any]:
 
     # Exit edgelines
     for i, offset in enumerate(exit_edge_offsets):
-        perp_offset = offset
+        perp_offset = -(offset)  # negative = right of away-direction
         near_x = dx * near_dist + px * perp_offset
         near_y = dy * near_dist + py * perp_offset
         far_x = dx * far_dist + px * perp_offset
@@ -298,8 +305,8 @@ def generate_arm_geometry(arm: ArmConfig) -> Dict[str, Any]:
         })
 
     # Exit road edges
-    for edge_side, offset in [("l", 0.0), ("r", total_width(arm.exit_widths))]:
-        perp_offset = 0.0 if edge_side == "l" else total_width(arm.exit_widths)
+    # Median edge at offset 0; outer edge at -total_width (negative perp direction)
+    for edge_side, perp_offset in [("inner", 0.0), ("outer", -(total_width(arm.exit_widths)))]:
         near_x = dx * near_dist + px * perp_offset
         near_y = dy * near_dist + py * perp_offset
         far_x = dx * far_dist + px * perp_offset
