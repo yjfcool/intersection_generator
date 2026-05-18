@@ -80,6 +80,21 @@ public:
             return result;
         }
 
+        // Detect shared-entry conflicts
+        bool hasSharedEntry = false;
+        for (auto& gcl : existing) {
+            if (gcl.connectionId == conn.id) continue;
+            const Connection* oc = nullptr;
+            for (auto& c : inp.connections) {
+                if (c.id == gcl.connectionId) { oc = &c; break; }
+            }
+            if (!oc) continue;
+            if (oc->enterLineId == conn.enterLineId) {
+                hasSharedEntry = true;
+                break;
+            }
+        }
+
         // D. Multi-strategy iterative solver
         double alpha = std::max(0.10, std::min(0.85, candidate.getAlpha(T0)));
         double beta  = std::max(0.10, std::min(0.85, candidate.getBeta(T3)));
@@ -96,12 +111,20 @@ public:
         double betaAdj    = beta;
 
         // E. Gradual spreading: positional taper near endpoints
-        // P1 is at parametric position ~alpha (near start), P2 is at ~(1-beta) (near end).
-        // Weight is reduced near endpoints (t=0, t=1) and full in the middle.
-        double taperRatio = cfg_.spreadGradualRatio; // portion of arc that gets tapered
+        // For shared-entry curves: asymmetric taper (full weight at entry, taper at exit)
+        // For non-shared: symmetric taper at both endpoints
+        double taperRatio = cfg_.spreadGradualRatio;
         auto positionalWeight = [&](double t) -> double {
-            // t=0 or t=1 -> weight=1-taperRatio (reduced)
-            // t=0.5 -> weight=1.0 (full)
+            if (hasSharedEntry) {
+                // Asymmetric: full weight at entry (t~0 corresponds to alphaAdj),
+                // taper only at exit end (t~1 corresponds to 1-betaAdj)
+                if (t > (1.0 - taperRatio)) {
+                    double dt = (t - (1.0 - taperRatio)) / taperRatio;
+                    return 1.0 - taperRatio * dt;
+                }
+                return 1.0;
+            }
+            // Symmetric taper
             if (t < taperRatio) {
                 return (1.0 - taperRatio) + taperRatio * (t / taperRatio);
             } else if (t > (1.0 - taperRatio)) {
@@ -132,8 +155,38 @@ public:
         int maxIter = cfg_.globalMaxIter;
 
         // Determine offset direction from centroid of intersection points
+        // Enhanced for shared-entry: use angular separation between exit directions
         auto computeOffsetDir = [&](const Polyline& pts,
                                     const std::vector<const Polyline*>& cfs) -> double {
+            if (hasSharedEntry) {
+                // For shared-entry curves: determine direction based on angular
+                // relationship of exit directions
+                Point2D myExitDir = (P3 - P0).normalized();
+                Point2D conflictExitDir{0, 0};
+                int cnt = 0;
+                for (auto* cl : cfs) {
+                    if (polylinesIntersectExcludeEndpoints(pts, *cl)) {
+                        // Use chord direction of conflict curve as its exit direction
+                        if (cl->size() >= 2) {
+                            Point2D cfDir = (cl->back() - cl->front()).normalized();
+                            conflictExitDir += cfDir;
+                            cnt++;
+                        }
+                    }
+                }
+                if (cnt > 0) {
+                    conflictExitDir = conflictExitDir * (1.0 / cnt);
+                    // Cross product determines which side candidate is relative to conflict
+                    // cross < 0: candidate exits to the RIGHT of conflict -> push RIGHT (negative normal)
+                    // cross > 0: candidate exits to the LEFT of conflict -> push LEFT (positive normal)
+                    double cross = conflictExitDir.cross(myExitDir);
+                    if (std::abs(cross) > 1e-6) {
+                        return (cross > 0) ? 1.0 : -1.0;
+                    }
+                }
+            }
+
+            // Fallback: midpoint centroid comparison
             Point2D centroid{0, 0};
             int cnt = 0;
             Point2D myMid = pts[pts.size() / 2];
@@ -151,8 +204,10 @@ public:
         };
 
         // Strategy phases: A=alpha/beta, B=gamma, C=combined
+        // For shared-entry conflicts, skip STRAT_A (reshaping doesn't separate near entry)
+        // and go directly to STRAT_B (lateral offset is more effective)
         enum Strategy { STRAT_A, STRAT_B, STRAT_C };
-        Strategy currentStrat = STRAT_A;
+        Strategy currentStrat = hasSharedEntry ? STRAT_B : STRAT_A;
         int stratFailCount = 0;
 
         // Issue 1 fix: latch direction at start of each strategy phase
@@ -243,9 +298,12 @@ public:
 
     /**
      * Lightweight polyline-based non-intersection enforcement.
-     * Used for Phase3 local detour results (not Bezier curves).
+     * Used for Phase3 local detour results and composite bezier curves.
      * Applies iterative lateral point displacement on the middle portion,
      * keeping endpoints fixed and maintaining smoothness via weighted kernel.
+     *
+     * Enhanced for shared-entry curves: uses asymmetric weighting (full weight
+     * near entry, tapered near exit) and angular-based offset direction.
      */
     Polyline enforcePolyline(
         const Polyline& pts,
@@ -272,11 +330,71 @@ public:
         }
         if (!hasConflict) return pts;
 
-        // Determine displacement direction based on midpoint relative to conflicts
+        // Detect shared-entry conflicts: curves that share the same start point
+        bool hasSharedEntry = false;
+        std::vector<const Polyline*> sharedEntryConflicts;
+        for (auto* cl : conflicts) {
+            if (!cl->empty() && !pts.empty() &&
+                dist(pts.front(), cl->front()) < 0.01) {
+                hasSharedEntry = true;
+                sharedEntryConflicts.push_back(cl);
+            }
+        }
+
+        // Determine displacement direction
         Point2D axis = (pts.back() - pts.front()).normalized();
         Point2D normal = axis.rotLeft();
 
+        // For shared-entry: override normal to be perpendicular to the conflict's
+        // direction, which more effectively separates curves diverging from a shared point
+        if (hasSharedEntry && !sharedEntryConflicts.empty()) {
+            // Use the average conflict chord direction to compute normal
+            Point2D conflictAxis{0, 0};
+            int cnt = 0;
+            for (auto* cl : sharedEntryConflicts) {
+                if (cl->size() >= 2) {
+                    conflictAxis += (cl->back() - cl->front()).normalized();
+                    cnt++;
+                }
+            }
+            if (cnt > 0) {
+                conflictAxis = conflictAxis * (1.0 / cnt);
+                if (conflictAxis.norm() > 1e-6) {
+                    normal = conflictAxis.normalized().rotLeft();
+                }
+            }
+        }
+
         auto computeDisplacementDir = [&](const Polyline& candidate) -> double {
+            if (hasSharedEntry && !sharedEntryConflicts.empty()) {
+                // For shared-entry curves: compute direction based on the angular
+                // relationship between exit directions. A right turn from the same
+                // entry as a straight should be pushed to the right of the straight.
+                Point2D myExit = candidate.back() - candidate.front();
+                Point2D myExitDir = myExit.normalized();
+
+                Point2D conflictExitDir{0, 0};
+                int cnt = 0;
+                for (auto* cl : sharedEntryConflicts) {
+                    if (polylinesIntersectExcludeEndpoints(candidate, *cl)) {
+                        Point2D cfExit = cl->back() - cl->front();
+                        conflictExitDir += cfExit.normalized();
+                        cnt++;
+                    }
+                }
+                if (cnt > 0) {
+                    conflictExitDir = conflictExitDir * (1.0 / cnt);
+                    // Cross product determines which side candidate is relative to conflict
+                    // cross < 0: candidate exits to the RIGHT of conflict -> push RIGHT (negative normal)
+                    // cross > 0: candidate exits to the LEFT of conflict -> push LEFT (positive normal)
+                    double cross = conflictExitDir.cross(myExitDir);
+                    if (std::abs(cross) > 1e-6) {
+                        return (cross > 0) ? 1.0 : -1.0;
+                    }
+                }
+            }
+
+            // Fallback: midpoint-based direction
             Point2D myMid = candidate[candidate.size() / 2];
             Point2D conflictCentroid{0, 0};
             int cnt = 0;
@@ -298,14 +416,15 @@ public:
         Polyline best = pts;
         int bestIntersections = (int)conflicts.size(); // worst case
 
-        static constexpr int MAX_POLY_ENFORCE_ITER = 20;
-        double baseDisp = 0.15; // base displacement per iteration
+        // More iterations and higher base displacement for shared-entry conflicts
+        int maxPolyIter = hasSharedEntry ? 40 : 20;
+        double baseDisp = hasSharedEntry ? 0.25 : 0.15;
 
-        // Latch direction at start to avoid oscillation (same fix as Bezier enforcer)
+        // Latch direction at start to avoid oscillation
         double latchedDir = computeDisplacementDir(current);
         if (latchedDir == 0.0) latchedDir = 1.0;
 
-        for (int iter = 0; iter < MAX_POLY_ENFORCE_ITER; ++iter) {
+        for (int iter = 0; iter < maxPolyIter; ++iter) {
             // Check current state
             bool stillIntersects = false;
             for (auto* cl : conflicts) {
@@ -320,27 +439,40 @@ public:
             }
 
             double dir = latchedDir;
-            double disp = baseDisp * (1.0 + iter * 0.15);
+            double disp = baseDisp * (1.0 + iter * 0.12);
 
-            // Apply Gaussian-weighted displacement to middle portion
+            // Apply weighted displacement
             int n = (int)current.size();
             for (int i = 1; i < n - 1; ++i) {
-                // Gaussian weight: max at center, zero at endpoints
                 double t = (double)i / (double)(n - 1); // 0..1
-                double gaussWeight = std::exp(-0.5 * ((t - 0.5) / 0.25) * ((t - 0.5) / 0.25));
-                current[i] += normal * (dir * disp * gaussWeight);
+                double weight;
+                if (hasSharedEntry) {
+                    // Asymmetric weight for shared-entry: full weight near entry (t~0),
+                    // tapered near exit (t~1) where curves naturally diverge.
+                    // This is crucial because the intersection happens near the entry.
+                    if (t < 0.6) {
+                        // Full weight in the entry region (first 60% of curve)
+                        weight = 1.0;
+                    } else {
+                        // Taper from 1.0 to 0.2 in the exit region
+                        double fadeT = (t - 0.6) / 0.4; // 0..1
+                        weight = 1.0 - 0.8 * fadeT;
+                    }
+                } else {
+                    // Symmetric Gaussian for non-shared-entry conflicts
+                    weight = std::exp(-0.5 * ((t - 0.5) / 0.25) * ((t - 0.5) / 0.25));
+                }
+                current[i] += normal * (dir * disp * weight);
             }
 
-            // Smoothing pass: prevent zig-zag artifacts on short polylines
-            // Apply 1-2-1 weighted average to interior points (endpoints fixed)
+            // Smoothing pass: prevent zig-zag artifacts
             if (n >= 4) {
                 Polyline smoothed = current;
-                int smoothPasses = (n < 8) ? 2 : 1; // more passes for shorter polylines
+                int smoothPasses = (n < 8) ? 2 : 1;
                 for (int sp = 0; sp < smoothPasses; ++sp) {
                     for (int i = 1; i < n - 1; ++i) {
                         smoothed[i] = current[i - 1] * 0.25 + current[i] * 0.5 + current[i + 1] * 0.25;
                     }
-                    // Keep endpoints fixed
                     smoothed[0] = current[0];
                     smoothed[n - 1] = current[n - 1];
                     current = smoothed;

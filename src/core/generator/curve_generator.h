@@ -238,37 +238,27 @@ private:
             ptsRaw        = sampleCompositeCurve(initRes.composite);
             ptsAfterAvoid = sampleCompositeCurve(avoidRes.curve);
 
-            // 对复合曲线执行非相交约束（转为单段近似处理）
+            // Non-intersection enforcement for composite curves via polyline enforcer
             ptsAfterEnforce = ptsAfterAvoid;
 
-            // 检查相交（用采样折线）- use corridor-proportional offset
-            // and determine direction based on conflict geometry
-            double corridorHalf = corridor.minHalfWidth > 0 ? corridor.minHalfWidth
-                                                         : cfg_.nonIntersect.corridorMinHalfWidth;
-            double curveLen = 0.0;
-            for (size_t i = 1; i < ptsAfterEnforce.size(); ++i)
-                curveLen += dist(ptsAfterEnforce[i-1], ptsAfterEnforce[i]);
-            // Offset proportional to corridor width, clamped by curve length
-            double offsetMag = std::min(corridorHalf * 0.4, curveLen * 0.05);
+            bool niRemains = false;
+            ptsAfterEnforce = enforcer.enforcePolyline(
+                ptsAfterAvoid, existing, conn, inp, niRemains);
+            interViol1 = niRemains;
 
-            for(auto& gcl : existing){
-                const Connection* oc = findConn(gcl.connectionId, inp);
-                (void)oc;
-                if(polylinesIntersectExcludeEndpoints(ptsAfterEnforce, gcl.geom)){
-                    interViol1 = true;
-                    // Determine direction from conflict geometry:
-                    // move away from conflicting curve's midpoint
-                    Point2D dir  = (P3-P0).normalized();
-                    Point2D norm = dir.rotLeft();
-                    Point2D myMid = ptsAfterEnforce[ptsAfterEnforce.size() / 2];
-                    Point2D cfMid = gcl.geom[gcl.geom.size() / 2];
-                    double side = (myMid - cfMid).dot(norm);
-                    double sign = (side >= 0) ? 1.0 : -1.0;
-                    for(size_t i=1;i+1<ptsAfterEnforce.size();++i){
-                        // Gaussian weight: more offset in middle, less at endpoints
-                        double t = (double)i / (double)(ptsAfterEnforce.size() - 1);
-                        double w = std::exp(-0.5 * ((t - 0.5) / 0.3) * ((t - 0.5) / 0.3));
-                        ptsAfterEnforce[i] += norm * (sign * offsetMag * w);
+            // Check if NI enforcement moved into obstacle
+            if (niRemains) {
+                // Keep the enforced result but mark intersection
+            }
+            auto compositeViols = obsIdx_.checkViolations(ptsAfterEnforce, cfg_.obstacle.safeMargin);
+            if (!compositeViols.empty() && !obstViol1) {
+                // NI enforcement moved into obstacle - revert to avoidance result
+                ptsAfterEnforce = ptsAfterAvoid;
+                interViol1 = false;
+                for (auto& gcl : existing) {
+                    if (polylinesIntersectExcludeEndpoints(ptsAfterEnforce, gcl.geom)) {
+                        interViol1 = true;
+                        break;
                     }
                 }
             }
