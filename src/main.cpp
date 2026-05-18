@@ -122,7 +122,7 @@ IntersectionOutput processIntersection(
 
     // --- Stage 2: 核心曲线生成 ---
     Logger::info("Stage 2: Generating intersection centerlines...");
-    CurveGenerator curveGen(cfg);
+    CurveGenerator curveGen(cfg, obsIdx);
     auto centerlines = curveGen.generate(inp, obsIdx);
     Logger::info("  Generated " + std::to_string(centerlines.size()) + " centerlines.");
 

@@ -50,22 +50,49 @@ public:
         bool interViolAvoid,
         bool obstViolEnforce,
         bool interViolEnforce,
-        bool localDetourActive = false)   // ← Phase3 局部绕障激活标志
+        bool localDetourActive = false,
+        int  cascadeLevel = 1)
     {
         ConflictResolveResult res;
 
-        // ── 局部绕障激活：避障绝对优先 ──────────────────────────────
+        // Log cascade level for debugging
+        res.warnDesc += "CASCADE_LEVEL=" + std::to_string(cascadeLevel) + ";";
+        Logger::debug("ConflictResolver: cascade level " + std::to_string(cascadeLevel));
+
+        // ── Cascade levels 3-4: obstacle avoidance absolute priority ──
+        if (cascadeLevel >= 3) {
+            // At high cascade levels, always use obstacle-avoidance result
+            res.finalPts = ptsAfterEnforce; // already set to detour/avoidance result by caller
+
+            if (obstViolEnforce) {
+                res.qualityFlags |= QF_WARN_OBSTACLE_PENETRATED;
+                res.warnDesc += "OBSTACLE_PENETRATED(cascade>=3);";
+            }
+            if (interViolEnforce) {
+                // Non-intersection is just a warning at cascade >= 3
+                res.qualityFlags |= QF_WARN_INTERSECTION_REMAIN;
+                res.warnDesc += "INTERSECT_RELAXED(cascade>=3);";
+            }
+
+            if (!ptsRaw.empty() && !res.finalPts.empty()) {
+                res.finalPts.front() = ptsRaw.front();
+                res.finalPts.back()  = ptsRaw.back();
+            }
+            return res;
+        }
+
+        // ── 局部绕障激活：避障绝対優先 ──────────────────────────────
         if (localDetourActive) {
             // 使用局部绕障结果（ptsAfterAvoid=detourPts）
             res.finalPts = ptsAfterAvoid;
 
             if (obstViolAvoid) {
-                // 局部绕障仍有穿越（极端情况，无法完全绕开）
+                // 局部绕障仍有穿越（極端情况，无法完全绕开）
                 res.qualityFlags |= QF_WARN_OBSTACLE_PENETRATED;
                 res.warnDesc += "OBSTACLE_PENETRATED(partial_detour);";
             }
             if (interViolAvoid) {
-                // 非相交降级：仅标警告，不强制修复
+                // 非相交降级：仅标警告，不强制修復
                 res.qualityFlags |= QF_WARN_INTERSECTION_REMAIN;
                 res.warnDesc += "INTERSECT_RELAXED(local_detour);";
             }
@@ -78,9 +105,9 @@ public:
             return res;
         }
 
-        // ── 普通三阶段（Phase1/2）结果协调 ────────────────────────────
+        // ── 普通三阶段（Phase1/2）结果協调 ────────────────────────────
         if (cfg_.priority == "non_intersect") {
-            // 非相交优先：使用 ptsAfterEnforce，标记避障警告
+            // 非相交優先：使用 ptsAfterEnforce，标记避障警告
             res.finalPts = ptsAfterEnforce;
             if (interViolEnforce) {
                 res.qualityFlags |= QF_WARN_INTERSECTION_REMAIN;
@@ -92,7 +119,7 @@ public:
             }
         }
         else if(cfg_.priority == "obstacle"){
-            // 避障优先：使用 ptsAfterAvoid，标记相交警告
+            // 避障優先：使用 ptsAfterAvoid，标记相交警告
             res.finalPts = ptsAfterAvoid;
             if (obstViolAvoid) {
                 res.qualityFlags |= QF_WARN_OBSTACLE_PENETRATED;
@@ -104,7 +131,7 @@ public:
             }
         }
         else { // "both_error"
-            // 两者都标记错误，输出非相交修复后的结果
+            // 两者都标记错误，输出非相交修復后的结果
             res.finalPts = ptsAfterEnforce;
             if (obstViolEnforce) {
                 res.qualityFlags |= QF_WARN_OBSTACLE_PENETRATED;

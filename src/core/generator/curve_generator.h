@@ -22,9 +22,11 @@
  */
 class CurveGenerator {
     const Config& cfg_;
+    const ObstacleSpatialIndex& obsIdx_;
 
 public:
-    explicit CurveGenerator(const Config& cfg) : cfg_(cfg) {}
+    explicit CurveGenerator(const Config& cfg, const ObstacleSpatialIndex& obsIdx)
+        : cfg_(cfg), obsIdx_(obsIdx) {}
 
     std::vector<GeneratedCenterline> generate(
         const IntersectionInput& inp,
@@ -37,9 +39,9 @@ public:
         auto corridors = allocator.allocate(cfg_.nonIntersect.corridorMinHalfWidth);
         auto sortedConns = allocator.sortedConnections();
 
-        ObstacleAvoider avoider(cfg_.obstacle, obsIdx);
+        ObstacleAvoider avoider(cfg_.obstacle, obsIdx_);
         NonIntersectEnforcer enforcer(cfg_.nonIntersect);
-        ConflictResolver resolver(cfg_.conflict, cfg_.obstacle, obsIdx);
+        ConflictResolver resolver(cfg_.conflict, cfg_.obstacle, obsIdx_);
 
         for(auto& conn : sortedConns){
             Logger::info("Generating conn: " + conn.id +
@@ -113,22 +115,30 @@ private:
             ? corridors[conn.id]
             : corridors["_default_"];
 
-        // 4. 避障处理
+        // 4. Obstacle avoidance and NI enforcement with 4-level cascade
         Polyline ptsRaw, ptsAfterAvoid, ptsAfterEnforce;
         bool obstViol1=false, interViol1=false;
         bool obstViol2=false, interViol2=false;
-        bool localDetourActive = false;  // Phase3 局部绕障激活
+        bool localDetourActive = false;
+        int cascadeLevel = 1;
         int qualFlags = 0;
 
         if(!initRes.useComposite){
-            // 单段贝塞尔
+            // Single-segment Bezier: 4-level cascade
             ptsRaw = sampleCurve(initRes.single);
 
+            // Collect existing curves polylines for cross-check
+            std::vector<Polyline> existingPolys;
+            existingPolys.reserve(existing.size());
+            for (auto& gcl : existing) existingPolys.push_back(gcl.geom);
+
+            // ══ Level 1: Normal flow (both constraints active) ══
             auto avoidRes = avoider.avoid(initRes.single, corridor,
                                           cfg_.obstacle.safeMargin, T0, T3,
-                                          cfg_.sampling.mode, getSamplingParam());
+                                          cfg_.sampling.mode, getSamplingParam(),
+                                          &existingPolys);
             obstViol1 = avoidRes.obstacleViolation;
-            // Phase3 局部绕障时直接使用折线
+
             if (avoidRes.useDetour) {
                 ptsAfterAvoid     = avoidRes.detourPts;
                 localDetourActive = true;
@@ -136,33 +146,74 @@ private:
                 ptsAfterAvoid = sampleCurve(avoidRes.curve);
             }
 
-            // Non-intersection enforcement (Phase3 local detour degrades: lightweight check only)
+            // Non-intersection enforcement
             if (localDetourActive) {
-                // Detour segment: use detour polyline directly, no enforce
+                // Phase3 local detour was triggered by obstacle avoider
+                // Go directly to cascade level 3
+                cascadeLevel = 3;
                 ptsAfterEnforce = ptsAfterAvoid;
-                // Still detect to flag
-                for (auto& gcl : existing) {
-                    if (polylinesIntersectExcludeEndpoints(ptsAfterEnforce, gcl.geom)) {
-                        interViol1 = true; break;
-                    }
+
+                // Attempt lightweight polyline NI fix
+                bool niRemains = false;
+                auto fixedPts = enforcer.enforcePolyline(
+                    ptsAfterAvoid, existing, conn, inp, niRemains);
+                ptsAfterEnforce = fixedPts;
+
+                if (niRemains) {
+                    cascadeLevel = 4;
+                    qualFlags |= QF_WARN_INTERSECTION_REMAIN;
                 }
+                interViol1 = niRemains;
+
+                // Check obstacle violations on the fixed result
+                obstViol2 = false;
+                auto fixedViols = obsIdx_.checkViolations(ptsAfterEnforce, cfg_.obstacle.safeMargin);
+                if (!fixedViols.empty()) {
+                    obstViol2 = true;
+                    // NI fix moved into obstacle - revert to pure detour
+                    ptsAfterEnforce = ptsAfterAvoid;
+                }
+                interViol2 = niRemains;
                 qualFlags |= QF_INFO_TWO_SEGMENT_USED;
             } else {
-                // Pass all existing curves; enforcer's collectConflicts filters internally
+                // Normal enforcement (Bezier-based)
                 auto enforceRes = enforcer.enforce(
                     avoidRes.curve, corridor, existing, conn, inp,
                     T0, T3,
                     cfg_.sampling.mode, getSamplingParam());
                 ptsAfterEnforce  = enforceRes.finalPts;
                 interViol1 = enforceRes.intersectionRemains;
-            }
 
-            // 再次检查避障
-            if(!obsIdx_empty()){
-                auto viols = checkObstacleViols(ptsAfterEnforce);
-                obstViol2 = !viols.empty();
+                // ══ Post-enforcement obstacle check (Level 1 -> Level 2 transition) ══
+                auto enforceViols = obsIdx_.checkViolations(ptsAfterEnforce, cfg_.obstacle.safeMargin);
+                obstViol2 = !enforceViols.empty();
+
+                if (obstViol2 && !obstViol1) {
+                    // Enforcement moved curve into obstacle - fall back to avoidance result
+                    // This is Level 2: obstacle priority
+                    cascadeLevel = 2;
+                    ptsAfterEnforce = ptsAfterAvoid;
+
+                    // Re-check intersection on avoidance result for warning
+                    interViol2 = false;
+                    for (auto& gcl : existing) {
+                        if (polylinesIntersectExcludeEndpoints(ptsAfterEnforce, gcl.geom)) {
+                            interViol2 = true;
+                            break;
+                        }
+                    }
+                    obstViol2 = false; // avoidance result was obstacle-clean
+                    Logger::info("  cascade L2: enforcement reintroduced obstacle, using avoidance result");
+                } else if (obstViol1) {
+                    // Avoidance itself had obstacle violation (Phase1/2 partial fail, no Phase3)
+                    // We are still at Level 1 but with violations
+                    // The resolver will handle priority
+                    interViol2 = interViol1;
+                } else {
+                    // Level 1 success path
+                    interViol2 = interViol1;
+                }
             }
-            interViol2 = interViol1;
 
             if(conn.isMidUturn){
                 qualFlags |= QF_INFO_UTURN_MID_EXCLUDED;
@@ -188,7 +239,6 @@ private:
             ptsAfterAvoid = sampleCompositeCurve(avoidRes.curve);
 
             // 对复合曲线执行非相交约束（转为单段近似处理）
-            // 为简化，将复合曲线视为采样折线进行相交检测
             ptsAfterEnforce = ptsAfterAvoid;
 
             // 检查相交（用采样折线）
@@ -207,14 +257,17 @@ private:
             }
             obstViol2 = obstViol1;
             interViol2 = interViol1;
+
+            if (localDetourActive) cascadeLevel = 3;
         }
 
-        // 5. 冲突协调（局部绕障激活时：避障优先，非相交降级）
+        // 5. 冲突协调 with cascade level
         auto resolveRes = resolver.resolve(
             ptsRaw, ptsAfterAvoid, ptsAfterEnforce,
             obstViol1, interViol1,
             obstViol2, interViol2,
-            localDetourActive);
+            localDetourActive,
+            cascadeLevel);
 
         qualFlags |= resolveRes.qualityFlags;
 
@@ -242,7 +295,8 @@ private:
         }
 
         Logger::info("  -> generated pts=" + std::to_string(gcl.geom.size()) +
-                     " flags=" + std::to_string(gcl.qualityFlags));
+                     " flags=" + std::to_string(gcl.qualityFlags) +
+                     " cascade=" + std::to_string(cascadeLevel));
 
         return gcl;
     }
@@ -279,12 +333,12 @@ private:
         return cfg_.sampling.adaptiveMaxAngleDeg;
     }
 
-    bool obsIdx_empty() const { return false; } // 简化：总是检查
+    bool obsIdx_empty() const { return obsIdx_.empty(); }
 
     std::vector<ObstacleSpatialIndex::Violation> checkObstacleViols(
         const Polyline& pts) const
     {
-        return {}; // 由调用方管理
+        return obsIdx_.checkViolations(pts, cfg_.obstacle.safeMargin);
     }
 
     const Connection* findConn(const std::string& id, const IntersectionInput& inp) const {

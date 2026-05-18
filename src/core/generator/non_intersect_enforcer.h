@@ -209,6 +209,120 @@ public:
         return result;
     }
 
+    /**
+     * Lightweight polyline-based non-intersection enforcement.
+     * Used for Phase3 local detour results (not Bezier curves).
+     * Applies iterative lateral point displacement on the middle portion,
+     * keeping endpoints fixed and maintaining smoothness via weighted kernel.
+     */
+    Polyline enforcePolyline(
+        const Polyline& pts,
+        const std::vector<GeneratedCenterline>& existing,
+        const Connection& conn,
+        const IntersectionInput& inp,
+        bool& intersectionRemains)
+    {
+        intersectionRemains = false;
+
+        if (pts.size() < 3) return pts;
+
+        // Collect conflicting curves
+        auto conflicts = collectConflicts(conn, existing, inp);
+        if (conflicts.empty()) return pts;
+
+        // Check if current polyline intersects any conflict curve
+        bool hasConflict = false;
+        for (auto* cl : conflicts) {
+            if (polylinesIntersectExcludeEndpoints(pts, *cl)) {
+                hasConflict = true;
+                break;
+            }
+        }
+        if (!hasConflict) return pts;
+
+        // Determine displacement direction based on midpoint relative to conflicts
+        Point2D axis = (pts.back() - pts.front()).normalized();
+        Point2D normal = axis.rotLeft();
+
+        auto computeDisplacementDir = [&](const Polyline& candidate) -> double {
+            Point2D myMid = candidate[candidate.size() / 2];
+            Point2D conflictCentroid{0, 0};
+            int cnt = 0;
+            for (auto* cl : conflicts) {
+                if (polylinesIntersectExcludeEndpoints(candidate, *cl)) {
+                    Point2D cfMid = (*cl)[cl->size() / 2];
+                    conflictCentroid += cfMid;
+                    cnt++;
+                }
+            }
+            if (cnt == 0) return 1.0;
+            conflictCentroid = conflictCentroid * (1.0 / cnt);
+            double side = (myMid - conflictCentroid).dot(normal);
+            return (side >= 0) ? 1.0 : -1.0;
+        };
+
+        // Iterative lateral point displacement
+        Polyline current = pts;
+        Polyline best = pts;
+        int bestIntersections = (int)conflicts.size(); // worst case
+
+        static constexpr int MAX_POLY_ENFORCE_ITER = 20;
+        double baseDisp = 0.15; // base displacement per iteration
+
+        for (int iter = 0; iter < MAX_POLY_ENFORCE_ITER; ++iter) {
+            // Check current state
+            bool stillIntersects = false;
+            for (auto* cl : conflicts) {
+                if (polylinesIntersectExcludeEndpoints(current, *cl)) {
+                    stillIntersects = true;
+                    break;
+                }
+            }
+            if (!stillIntersects) {
+                // Resolved
+                return current;
+            }
+
+            double dir = computeDisplacementDir(current);
+            double disp = baseDisp * (1.0 + iter * 0.15);
+
+            // Apply Gaussian-weighted displacement to middle portion
+            int n = (int)current.size();
+            for (int i = 1; i < n - 1; ++i) {
+                // Gaussian weight: max at center, zero at endpoints
+                double t = (double)i / (double)(n - 1); // 0..1
+                double gaussWeight = std::exp(-0.5 * ((t - 0.5) / 0.25) * ((t - 0.5) / 0.25));
+                current[i] += normal * (dir * disp * gaussWeight);
+            }
+
+            // Count remaining intersections for best tracking
+            int curIntersections = 0;
+            for (auto* cl : conflicts) {
+                if (polylinesIntersectExcludeEndpoints(current, *cl))
+                    curIntersections++;
+            }
+            if (curIntersections < bestIntersections) {
+                bestIntersections = curIntersections;
+                best = current;
+            }
+        }
+
+        // Max iterations reached - check final state
+        bool stillIntersects = false;
+        for (auto* cl : conflicts) {
+            if (polylinesIntersectExcludeEndpoints(current, *cl)) {
+                stillIntersects = true;
+                break;
+            }
+        }
+        if (!stillIntersects) return current;
+
+        // Return best attempt, mark intersection remains
+        intersectionRemains = true;
+        Logger::warn("NonIntersect: enforcePolyline failed after max iterations for conn " + conn.id);
+        return best;
+    }
+
 private:
     Polyline makeSample(const CubicBezier& c,
         const std::string& mode, double param) const
