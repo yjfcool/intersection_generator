@@ -212,6 +212,8 @@ public:
             makeField("TURN_TYPE",'C', 20, 0),
             makeField("QUALITY",  'N',  6, 0),
             makeField("WARN_DESC",'C',200, 0),
+            makeField("LEFT_EL",  'C', 64, 0),
+            makeField("RIGHT_EL", 'C', 64, 0),
         };
 
         std::vector<Record> records;
@@ -226,7 +228,9 @@ public:
                 cl.exitLineId,
                 turnTypeStr(cl.turnType),
                 std::to_string(cl.qualityFlags),
-                cl.warnDesc.substr(0, 199)
+                cl.warnDesc.substr(0, 199),
+                cl.leftEdgelineId,
+                cl.rightEdgelineId
             };
             records.push_back(r);
         }
@@ -243,8 +247,8 @@ public:
 
         std::vector<Field> fields = {
             makeField("ID",        'C', 64, 0),
-            makeField("LEFT_CL",   'C', 64, 0),
-            makeField("RIGHT_CL",  'C', 64, 0),
+            makeField("CL_ID",     'C', 64, 0),
+            makeField("SIDE",      'C', 10, 0),
             makeField("QUALITY",   'N',  6, 0),
         };
 
@@ -255,8 +259,8 @@ public:
             r.isPolygon = false;
             r.values = {
                 el.id,
-                el.leftCenterlineId,
-                el.rightCenterlineId,
+                el.centerlineId,
+                el.side,
                 std::to_string(el.qualityFlags)
             };
             records.push_back(r);

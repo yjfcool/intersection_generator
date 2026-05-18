@@ -28,10 +28,12 @@ public:
     explicit EdgeLineGenerator(const Config& cfg) : cfg_(cfg) {}
 
     std::vector<GeneratedEdgeLine> generate(
-        const std::vector<GeneratedCenterline>& centerlines,
+        std::vector<GeneratedCenterline>& centerlines,
         const IntersectionInput& inp)
     {
         std::vector<GeneratedEdgeLine> result;
+        // 用于回填 centerline 的左右边线ID
+        std::map<std::string, std::pair<std::string,std::string>> edgeIdMap;
 
         // 建立 connectionId → 已生成中心线 的映射
         std::map<std::string, const GeneratedCenterline*> clMap;
@@ -53,7 +55,16 @@ public:
                 [](auto& a, auto& b){ return a.first < b.first; });
 
             // 为相邻中心线对生成共享边线
-            generateGroupEdgeLines(orderedConns, grp, inp, clMap, result);
+            generateGroupEdgeLines(orderedConns, grp, inp, clMap, result, edgeIdMap);
+        }
+
+        // 回填 GeneratedCenterline 的 leftEdgelineId / rightEdgelineId
+        for(auto& gcl : centerlines){
+            auto it = edgeIdMap.find(gcl.id);
+            if(it != edgeIdMap.end()){
+                gcl.leftEdgelineId  = it->second.first;
+                gcl.rightEdgelineId = it->second.second;
+            }
         }
 
         return result;
@@ -65,7 +76,8 @@ private:
         const LaneGroup& grp,
         const IntersectionInput& inp,
         const std::map<std::string, const GeneratedCenterline*>& clMap,
-        std::vector<GeneratedEdgeLine>& result)
+        std::vector<GeneratedEdgeLine>& result,
+        std::map<std::string, std::pair<std::string,std::string>>& edgeIdMap)
     {
         if(orderedConns.empty()) return;
 
@@ -118,25 +130,29 @@ private:
                                       rightEndPt,   exitTangRight,  smoothPts);
 
             // 左边线
+            std::string leftElId  = "gen_el_left_"+conn->id;
+            std::string rightElId = "gen_el_right_"+conn->id;
             {
                 GeneratedEdgeLine el;
-                el.id                = "gen_el_left_"+conn->id;
+                el.id                = leftElId;
                 el.geom              = leftPts;
-                el.leftCenterlineId  = "";
-                el.rightCenterlineId = gcl.id;
+                el.centerlineId      = gcl.id;
+                el.side              = "left";
                 el.qualityFlags      = 0;
                 result.push_back(el);
             }
             // 右边线
             {
                 GeneratedEdgeLine el;
-                el.id                = "gen_el_right_"+conn->id;
+                el.id                = rightElId;
                 el.geom              = rightPts;
-                el.leftCenterlineId  = gcl.id;
-                el.rightCenterlineId = "";
+                el.centerlineId      = gcl.id;
+                el.side              = "right";
                 el.qualityFlags      = 0;
                 result.push_back(el);
             }
+            // 记录生成中心线的左右边线ID（需要后续回填到 centerlines 中）
+            edgeIdMap[gcl.id] = {leftElId, rightElId};
         }
     }
 

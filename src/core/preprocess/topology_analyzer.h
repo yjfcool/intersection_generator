@@ -36,27 +36,34 @@ private:
                 it->second.groupId    = gid;
                 it->second.laneOrder  = i; // 0=最内侧
             }
-            // 边线：组内排序按 edgelineIds 顺序（0=最内侧）
+            // 边线：组内排序按 edgelineIds 顺序
             for(int i=0;i<(int)grp.edgelineIds.size();++i){
                 auto it = inp.edgelines.find(grp.edgelineIds[i]);
                 if(it==inp.edgelines.end()) continue;
                 it->second.groupType = grp.type;
                 it->second.groupId   = gid;
-                it->second.lineOrder = i; // 0=最内侧
+                it->second.lineOrder = i;
             }
-            // 中心线左右边线：相邻边线 id（沿行进方向：内侧=左侧，外侧=右侧）
-            // 按车道组的常规约定：edgelineIds[i] 是 centerlineIds[i] 左侧边线，
-            // edgelineIds[i+1] 是右侧边线（边线数应等于车道数+1）
+            // 中心线左右边线关联
+            // 新约定：edgelineIds = [cl0_left, cl0_right, cl1_left, cl1_right, ...]
+            //         size = centerlineIds.size() * 2
+            // 旧约定兼容：edgelineIds.size() == centerlineIds.size() + 1
+            //         表示 [最内侧边线, 中间共享边线..., 最外侧边线]
             int nCl = (int)grp.centerlineIds.size();
             int nEl = (int)grp.edgelineIds.size();
             for(int i=0;i<nCl;++i){
                 auto clit = inp.centerlines.find(grp.centerlineIds[i]);
                 if(clit==inp.centerlines.end()) continue;
-                if(nEl >= nCl + 1){
+                if(nEl == nCl * 2){
+                    // 新约定：每条中心线对应两条边线 [left, right]
+                    clit->second.leftEdgelineId  = grp.edgelineIds[i*2];
+                    clit->second.rightEdgelineId = grp.edgelineIds[i*2+1];
+                } else if(nEl >= nCl + 1){
+                    // 旧约定：边线数 = 车道数 + 1（共享边线）
                     clit->second.leftEdgelineId  = grp.edgelineIds[i];
                     clit->second.rightEdgelineId = grp.edgelineIds[i+1];
                 } else if(nEl == nCl){
-                    // 退化：边线数与车道数一致，仅赋一侧
+                    // 退化：边线数与车道数一致
                     clit->second.leftEdgelineId  = grp.edgelineIds[i];
                     clit->second.rightEdgelineId = (i+1<nEl) ? grp.edgelineIds[i+1] : "";
                 } else if(nEl > 0){

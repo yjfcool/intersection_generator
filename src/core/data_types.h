@@ -110,7 +110,9 @@ struct LaneGroup {
     std::string              id;
     GroupType                type;
     std::vector<std::string> centerlineIds;  // 由内→外排列
-    std::vector<std::string> edgelineIds;    // 边线ID列表
+    std::vector<std::string> edgelineIds;    // 按 centerlineIds 的左右边线依次排列:
+                                             // [cl0_left, cl0_right, cl1_left, cl1_right, ...]
+                                             // size = centerlineIds.size() * 2
     AttrMap                  attrs;
 };
 
@@ -197,13 +199,16 @@ struct GeneratedCenterline {
     TurnType    turnType = TurnType::UNKNOWN;
     int         qualityFlags = 0;
     std::string warnDesc;
+    // 该生成中心线左右两侧的生成边线ID
+    std::string leftEdgelineId;   // 沿行进方向左侧边线
+    std::string rightEdgelineId;  // 沿行进方向右侧边线
 };
 
 struct GeneratedEdgeLine {
     std::string id;
     Polyline    geom;
-    std::string leftCenterlineId;
-    std::string rightCenterlineId;
+    std::string centerlineId;     // 关联的生成中心线ID
+    std::string side;             // "left" 或 "right"（相对行进方向）
     int         qualityFlags = 0;
 };
 
