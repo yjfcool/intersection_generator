@@ -297,6 +297,210 @@ public:
     }
 
     /**
+     * Composite Bezier non-intersection enforcement.
+     * Adjusts the mid-point M and segment alpha/beta parameters to avoid
+     * intersections while maintaining G1 continuity and smooth shape.
+     * This avoids the S-shape problem that polyline-based enforcement creates.
+     */
+    CompositeBezier enforceComposite(
+        const CompositeBezier& composite,
+        const std::vector<GeneratedCenterline>& existing,
+        const Connection& conn,
+        const IntersectionInput& inp,
+        const Point2D& T0,
+        const Point2D& T3,
+        const std::string& samplingMode,
+        double samplingParam,
+        bool& intersectionRemains)
+    {
+        intersectionRemains = false;
+
+        auto conflicts = collectConflicts(conn, existing, inp);
+        if (conflicts.empty()) return composite;
+
+        // Sample the current composite curve
+        auto sampleComp = [&](const CompositeBezier& cb) -> Polyline {
+            Polyline pts;
+            if (samplingMode == "fixed_spacing") pts = cb.sampleBySpacing(samplingParam > 0 ? samplingParam : 0.5);
+            else if (samplingMode == "fixed_count") pts = cb.sampleCount((int)(samplingParam > 0 ? samplingParam : 50));
+            else pts = cb.sampleAdaptive(0.5, 2.0, 0.05);
+            if (!pts.empty()) { pts.front() = composite.seg1.ctrl[0]; pts.back() = composite.seg2.ctrl[3]; }
+            return pts;
+        };
+
+        // Check if current composite curve has conflicts
+        Polyline currentPts = sampleComp(composite);
+        bool hasConflict = false;
+        for (auto* cl : conflicts) {
+            if (polylinesIntersectExcludeEndpoints(currentPts, *cl)) {
+                hasConflict = true;
+                break;
+            }
+        }
+        if (!hasConflict) return composite;
+
+        // Get fixed endpoints and tangents
+        const Point2D& P0 = composite.seg1.ctrl[0];
+        const Point2D& P3 = composite.seg2.ctrl[3];
+        Point2D M = composite.seg1.ctrl[3]; // current mid-point (= seg2.ctrl[0])
+        Point2D Tmid = composite.seg1.evalDeriv1(1.0).normalized();
+
+        // Determine the offset direction for mid-point M
+        Point2D chord = (P3 - P0);
+        double chordLen = chord.norm();
+        if (chordLen < EPS) {
+            intersectionRemains = true;
+            return composite;
+        }
+        Point2D chordN = chord.normalized();
+
+        // Compute offset direction: perpendicular to conflict's chord, pointing away from conflict
+        double offsetDir = 1.0; // default: push left of chord
+        for (auto* cl : conflicts) {
+            if (cl->size() >= 2 && polylinesIntersectExcludeEndpoints(currentPts, *cl)) {
+                Point2D cfChord = (cl->back() - cl->front()).normalized();
+                // Cross product: if candidate exits to right of conflict, push right (negative)
+                double cross = cfChord.cross(chordN);
+                if (std::abs(cross) > 1e-6) {
+                    offsetDir = (cross > 0) ? 1.0 : -1.0;
+                }
+                break;
+            }
+        }
+
+        // Normal direction for M shift: perpendicular to the Tmid direction
+        // This shifts M laterally without changing the general flow direction
+        Point2D mNormal = Tmid.rotLeft() * offsetDir;
+
+        // Iteratively shift M and rebuild the composite Bezier
+        double d1 = dist(P0, M);
+        double d2 = dist(M, P3);
+        double alpha1 = std::max(0.10, std::min(0.85, composite.seg1.getAlpha(T0)));
+        double alpha2 = std::max(0.10, std::min(0.85, composite.seg2.getAlpha(Tmid)));
+        double beta1  = std::max(0.10, std::min(0.85, composite.seg1.getBeta(Tmid * (-1.0))));
+        double beta2  = std::max(0.10, std::min(0.85, composite.seg2.getBeta(T3)));
+
+        CompositeBezier best = composite;
+        int bestConflictCount = (int)conflicts.size();
+
+        // Try increasing M offsets until no intersection or max reached
+        double maxOffset = std::min(d1, d2) * 0.5; // don't shift M more than half the segment length
+        double step = maxOffset / 40.0;
+        if (step < 0.05) step = 0.05;
+
+        for (int iter = 0; iter < 40; ++iter) {
+            double offset = step * (iter + 1);
+            Point2D Mshift = M + mNormal * offset;
+
+            // Recompute Tmid to maintain smooth flow through shifted M
+            // Tmid should bisect the directions P0->Mshift and Mshift->P3
+            Point2D dirToM = (Mshift - P0).normalized();
+            Point2D dirFromM = (P3 - Mshift).normalized();
+            Point2D newTmid = (dirToM + dirFromM);
+            if (newTmid.norm() > EPS) {
+                newTmid = newTmid.normalized();
+            } else {
+                newTmid = Tmid; // fallback
+            }
+
+            // Rebuild segments with updated M and Tmid
+            double nd1 = dist(P0, Mshift);
+            double nd2 = dist(Mshift, P3);
+            if (nd1 < EPS || nd2 < EPS) continue;
+
+            // Segment 1: P0 -> Mshift, tangents T0 and newTmid
+            Point2D P1_s1 = P0 + T0 * (alpha1 * nd1);
+            Point2D P2_s1 = Mshift - newTmid * (beta1 * nd1);
+            CubicBezier seg1(P0, P1_s1, P2_s1, Mshift);
+
+            // Segment 2: Mshift -> P3, tangents newTmid and T3
+            Point2D P1_s2 = Mshift + newTmid * (alpha2 * nd2);
+            Point2D P2_s2 = P3 + T3 * (beta2 * nd2);
+            CubicBezier seg2(Mshift, P1_s2, P2_s2, P3);
+
+            CompositeBezier trial(seg1, seg2);
+            Polyline trialPts = sampleComp(trial);
+
+            // Check for conflicts
+            int conflictCount = 0;
+            for (auto* cl : conflicts) {
+                if (polylinesIntersectExcludeEndpoints(trialPts, *cl)) {
+                    conflictCount++;
+                }
+            }
+
+            if (conflictCount < bestConflictCount) {
+                bestConflictCount = conflictCount;
+                best = trial;
+            }
+
+            if (conflictCount == 0) {
+                Logger::debug("NonIntersect: enforceComposite resolved at M offset=" +
+                    std::to_string(offset));
+                return trial;
+            }
+        }
+
+        // If shifting M in one direction didn't work, try the other direction
+        if (bestConflictCount > 0) {
+            mNormal = mNormal * (-1.0); // reverse direction
+            for (int iter = 0; iter < 40; ++iter) {
+                double offset = step * (iter + 1);
+                Point2D Mshift = M + mNormal * offset;
+
+                Point2D dirToM = (Mshift - P0).normalized();
+                Point2D dirFromM = (P3 - Mshift).normalized();
+                Point2D newTmid = (dirToM + dirFromM);
+                if (newTmid.norm() > EPS) {
+                    newTmid = newTmid.normalized();
+                } else {
+                    newTmid = Tmid;
+                }
+
+                double nd1 = dist(P0, Mshift);
+                double nd2 = dist(Mshift, P3);
+                if (nd1 < EPS || nd2 < EPS) continue;
+
+                Point2D P1_s1 = P0 + T0 * (alpha1 * nd1);
+                Point2D P2_s1 = Mshift - newTmid * (beta1 * nd1);
+                CubicBezier seg1(P0, P1_s1, P2_s1, Mshift);
+
+                Point2D P1_s2 = Mshift + newTmid * (alpha2 * nd2);
+                Point2D P2_s2 = P3 + T3 * (beta2 * nd2);
+                CubicBezier seg2(Mshift, P1_s2, P2_s2, P3);
+
+                CompositeBezier trial(seg1, seg2);
+                Polyline trialPts = sampleComp(trial);
+
+                int conflictCount = 0;
+                for (auto* cl : conflicts) {
+                    if (polylinesIntersectExcludeEndpoints(trialPts, *cl)) {
+                        conflictCount++;
+                    }
+                }
+
+                if (conflictCount < bestConflictCount) {
+                    bestConflictCount = conflictCount;
+                    best = trial;
+                }
+
+                if (conflictCount == 0) {
+                    Logger::debug("NonIntersect: enforceComposite resolved at M offset=" +
+                        std::to_string(-offset) + " (reversed)");
+                    return trial;
+                }
+            }
+        }
+
+        // Return best attempt
+        if (bestConflictCount > 0) {
+            intersectionRemains = true;
+            Logger::warn("NonIntersect: enforceComposite failed for conn " + conn.id);
+        }
+        return best;
+    }
+
+    /**
      * Lightweight polyline-based non-intersection enforcement.
      * Used for Phase3 local detour results and composite bezier curves.
      * Applies iterative lateral point displacement on the middle portion,

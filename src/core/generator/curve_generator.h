@@ -238,18 +238,15 @@ private:
             ptsRaw        = sampleCompositeCurve(initRes.composite);
             ptsAfterAvoid = sampleCompositeCurve(avoidRes.curve);
 
-            // Non-intersection enforcement for composite curves via polyline enforcer
-            ptsAfterEnforce = ptsAfterAvoid;
-
+            // Non-intersection enforcement for composite curves (Bezier-level)
             bool niRemains = false;
-            ptsAfterEnforce = enforcer.enforcePolyline(
-                ptsAfterAvoid, existing, conn, inp, niRemains);
+            CompositeBezier enforced = enforcer.enforceComposite(
+                avoidRes.curve, existing, conn, inp,
+                T0, T3, cfg_.sampling.mode, getSamplingParam(), niRemains);
+            ptsAfterEnforce = sampleCompositeCurve(enforced);
             interViol1 = niRemains;
 
             // Check if NI enforcement moved into obstacle
-            if (niRemains) {
-                // Keep the enforced result but mark intersection
-            }
             auto compositeViols = obsIdx_.checkViolations(ptsAfterEnforce, cfg_.obstacle.safeMargin);
             if (!compositeViols.empty() && !obstViol1) {
                 // NI enforcement moved into obstacle - revert to avoidance result
