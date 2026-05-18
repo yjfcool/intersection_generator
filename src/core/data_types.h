@@ -89,6 +89,9 @@ struct LaneCenterline {
     Point2D     tangentDir;     // 连接点切线（指向路口内侧）
     int         laneOrder = 0;  // 组内横向排序（0=最内侧）
     std::string groupId;
+    // 该车道左右两侧的边线ID（由拓扑分析填充）
+    std::string leftEdgelineId;   // 沿行进方向，左侧边线ID
+    std::string rightEdgelineId;  // 沿行进方向，右侧边线ID
 };
 
 struct LaneEdgeLine {
@@ -96,12 +99,11 @@ struct LaneEdgeLine {
     Polyline    geom;
     GroupType   groupType;
     AttrMap     attrs;
-    std::string leftCenterlineId;
-    std::string rightCenterlineId;
     // 预处理填充
     Point2D     connectionPt;
     Point2D     tangentDir;
     std::string groupId;
+    int         lineOrder = 0;  // 组内横向排序（0=最内侧）
 };
 
 struct LaneGroup {

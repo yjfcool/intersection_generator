@@ -1,0 +1,67 @@
+{
+  "scenario_id": "uturn_test_01",
+  "ref_point": { "lon": 116.395, "lat": 39.911 },
+  "coord_type": "projected",
+  "lane_groups": [
+    { "id":"lg_enter_south","type":"enter",
+      "centerline_ids":["cl_s1","cl_s2"],
+      "edgeline_ids":["el_s_l","el_s_m","el_s_r"] },
+    { "id":"lg_enter_north","type":"enter",
+      "centerline_ids":["cl_n1","cl_n2"],
+      "edgeline_ids":["el_n_l","el_n_m","el_n_r"] },
+    { "id":"lg_exit_south", "type":"exit",
+      "centerline_ids":["cl_xs1","cl_xs2"],
+      "edgeline_ids":["el_xs_l","el_xs_m","el_xs_r"] },
+    { "id":"lg_exit_north", "type":"exit",
+      "centerline_ids":["cl_xn1","cl_xn2"],
+      "edgeline_ids":["el_xn_l","el_xn_m","el_xn_r"] }
+  ],
+  "centerlines": [
+    { "id":"cl_s1",  "geom":{"type":"LineString","coordinates":[[-1.75,-30],[-1.75,-12]]}, "attrs":{"note":"南向北最内侧（左）车道"} },
+    { "id":"cl_s2",  "geom":{"type":"LineString","coordinates":[[-5.25,-30],[-5.25,-12]]}, "attrs":{} },
+    { "id":"cl_n1",  "geom":{"type":"LineString","coordinates":[[ 1.75, 30],[ 1.75, 12]]}, "attrs":{"note":"北向南最内侧（左）车道"} },
+    { "id":"cl_n2",  "geom":{"type":"LineString","coordinates":[[ 5.25, 30],[ 5.25, 12]]}, "attrs":{} },
+    { "id":"cl_xn1", "geom":{"type":"LineString","coordinates":[[-1.75, 12],[-1.75, 30]]}, "attrs":{"note":"路口出去向北的最内侧车道"} },
+    { "id":"cl_xn2", "geom":{"type":"LineString","coordinates":[[-5.25, 12],[-5.25, 30]]}, "attrs":{} },
+    { "id":"cl_xs1", "geom":{"type":"LineString","coordinates":[[ 1.75,-12],[ 1.75,-30]]}, "attrs":{"note":"路口出去向南的最内侧车道"} },
+    { "id":"cl_xs2", "geom":{"type":"LineString","coordinates":[[ 5.25,-12],[ 5.25,-30]]}, "attrs":{} }
+  ],
+  "edgelines": [
+    { "id":"el_s_l",  "geom":{"type":"LineString","coordinates":[[ 0,-30],[ 0,-12]]}, "attrs":{} },
+    { "id":"el_s_m",  "geom":{"type":"LineString","coordinates":[[-3.5,-30],[-3.5,-12]]}, "attrs":{} },
+    { "id":"el_s_r",  "geom":{"type":"LineString","coordinates":[[-7,-30],[-7,-12]]}, "attrs":{} },
+    { "id":"el_n_l",  "geom":{"type":"LineString","coordinates":[[ 0, 30],[ 0, 12]]}, "attrs":{} },
+    { "id":"el_n_m",  "geom":{"type":"LineString","coordinates":[[ 3.5, 30],[ 3.5, 12]]}, "attrs":{} },
+    { "id":"el_n_r",  "geom":{"type":"LineString","coordinates":[[ 7, 30],[ 7, 12]]}, "attrs":{} },
+    { "id":"el_xn_l", "geom":{"type":"LineString","coordinates":[[ 0, 12],[ 0, 30]]}, "attrs":{} },
+    { "id":"el_xn_m", "geom":{"type":"LineString","coordinates":[[-3.5, 12],[-3.5, 30]]}, "attrs":{} },
+    { "id":"el_xn_r", "geom":{"type":"LineString","coordinates":[[-7, 12],[-7, 30]]}, "attrs":{} },
+    { "id":"el_xs_l", "geom":{"type":"LineString","coordinates":[[ 0,-12],[ 0,-30]]}, "attrs":{} },
+    { "id":"el_xs_m", "geom":{"type":"LineString","coordinates":[[ 3.5,-12],[ 3.5,-30]]}, "attrs":{} },
+    { "id":"el_xs_r", "geom":{"type":"LineString","coordinates":[[ 7,-12],[ 7,-30]]}, "attrs":{} }
+  ],
+  "connections": [
+    { "id":"conn_s1_xn1","enter_group_id":"lg_enter_south","exit_group_id":"lg_exit_north","enter_line_id":"cl_s1","exit_line_id":"cl_xn1","turn_type":"straight" },
+    { "id":"conn_s2_xn2","enter_group_id":"lg_enter_south","exit_group_id":"lg_exit_north","enter_line_id":"cl_s2","exit_line_id":"cl_xn2","turn_type":"straight" },
+    { "id":"conn_n1_xs1","enter_group_id":"lg_enter_north","exit_group_id":"lg_exit_south","enter_line_id":"cl_n1","exit_line_id":"cl_xs1","turn_type":"straight" },
+    { "id":"conn_n2_xs2","enter_group_id":"lg_enter_north","exit_group_id":"lg_exit_south","enter_line_id":"cl_n2","exit_line_id":"cl_xs2","turn_type":"straight" },
+
+    { "id":"conn_s1_xs1","enter_group_id":"lg_enter_south","exit_group_id":"lg_exit_south","enter_line_id":"cl_s1","exit_line_id":"cl_xs1","turn_type":"u_turn_left",
+      "attrs":{"note":"南向北最内侧调头到出南最内侧"} },
+    { "id":"conn_n1_xn1","enter_group_id":"lg_enter_north","exit_group_id":"lg_exit_north","enter_line_id":"cl_n1","exit_line_id":"cl_xn1","turn_type":"u_turn_left",
+      "attrs":{"note":"北向南最内侧调头到出北最内侧"} }
+  ],
+  "obstacles": [],
+  "stop_lines": [],
+  "road_edges": [
+    { "id":"re_s_l","geom":{"type":"LineString","coordinates":[[ 0,-30],[ 0,-12]]},"attrs":{} },
+    { "id":"re_s_r","geom":{"type":"LineString","coordinates":[[-7,-30],[-7,-12]]},"attrs":{} },
+    { "id":"re_n_l","geom":{"type":"LineString","coordinates":[[ 0, 30],[ 0, 12]]},"attrs":{} },
+    { "id":"re_n_r","geom":{"type":"LineString","coordinates":[[ 7, 30],[ 7, 12]]},"attrs":{} }
+  ],
+  "rough_area": {
+    "id":"rough_01",
+    "geom":{"type":"Polygon","coordinates":[[[-7,-12],[-7,12],[7,12],[7,-12],[-7,-12]]]},
+    "attrs":{}
+  }
+}

@@ -71,6 +71,8 @@ public:
             makeField("LANE_ORDER",  'C', 64, 0),
             makeField("GROUP_ID",'C', 64, 0),
             makeField("GROUP_TYPE",'C', 64, 0),
+            makeField("LEFT_EID",'C', 64, 0),
+            makeField("RIGHT_EID",'C', 64, 0),
         };
         std::vector<Record> records;
         for(auto idcl : centerlines){
@@ -82,7 +84,9 @@ public:
                 cl.id,
                 std::to_string(cl.laneOrder),
                 cl.groupId,
-                cl.groupType == GroupType::ENTER ? "enter" : "exit"
+                cl.groupType == GroupType::ENTER ? "enter" : "exit",
+                cl.leftEdgelineId,
+                cl.rightEdgelineId
             };
             records.push_back(r);
         }
@@ -96,8 +100,7 @@ public:
             makeField("ID",       'C', 64, 0),
             makeField("GROUP_ID",'C', 64, 0),
             makeField("GROUP_TYPE",'C', 64, 0),
-            makeField("LEFT_CLINE_ID",'C', 64, 0),
-            makeField("RIGHT_CLINE_ID",'C', 64, 0),
+            makeField("LINE_ORDER",'C', 64, 0),
         };
         std::vector<Record> records;
         for(auto idel : edgelines){
@@ -109,8 +112,7 @@ public:
                 el.id,
                 el.groupId,
                 el.groupType == GroupType::ENTER ? "enter" : "exit",
-                el.leftCenterlineId,
-                el.rightCenterlineId
+                std::to_string(el.lineOrder)
             };
             records.push_back(r);
         }

@@ -1,0 +1,58 @@
+{
+  "scenario_id": "detour_smooth_test",
+  "ref_point": { "lon": 116.395, "lat": 39.911 },
+  "coord_type": "projected",
+  "lane_groups": [
+    { "id":"lg_enter_south","type":"enter",
+      "centerline_ids":["cl_s1"],
+      "edgeline_ids":["el_s_l","el_s_r"] },
+    { "id":"lg_exit_north", "type":"exit",
+      "centerline_ids":["cl_xn1"],
+      "edgeline_ids":["el_xn_l","el_xn_r"] }
+  ],
+  "centerlines": [
+    { "id":"cl_s1",  "geom":{"type":"LineString","coordinates":[[ 0,-30],[ 0,-12]]}, "attrs":{} },
+    { "id":"cl_xn1", "geom":{"type":"LineString","coordinates":[[ 0, 12],[ 0, 30]]}, "attrs":{} }
+  ],
+  "edgelines": [
+    { "id":"el_s_l",  "geom":{"type":"LineString","coordinates":[[-1.75,-30],[-1.75,-12]]}, "attrs":{} },
+    { "id":"el_s_r",  "geom":{"type":"LineString","coordinates":[[ 1.75,-30],[ 1.75,-12]]}, "attrs":{} },
+    { "id":"el_xn_l", "geom":{"type":"LineString","coordinates":[[ 1.75, 12],[ 1.75, 30]]}, "attrs":{} },
+    { "id":"el_xn_r", "geom":{"type":"LineString","coordinates":[[-1.75, 12],[-1.75, 30]]}, "attrs":{} }
+  ],
+  "connections": [
+    {
+      "id":"conn_s1_xn1",
+      "enter_group_id":"lg_enter_south","exit_group_id":"lg_exit_north",
+      "enter_line_id":"cl_s1","exit_line_id":"cl_xn1",
+      "turn_type":"straight"
+    }
+  ],
+  "obstacles": [
+    {
+      "id":"obs_small",
+      "geom_type":"polygon",
+      "geom":{
+        "type":"Polygon",
+        "coordinates":[[
+          [-0.4,-1.5],
+          [-0.4, 1.5],
+          [ 0.4, 1.5],
+          [ 0.4,-1.5],
+          [-0.4,-1.5]
+        ]]
+      },
+      "attrs":{"type":"small_pole","note":"small obstacle directly on the centerline"}
+    }
+  ],
+  "stop_lines": [],
+  "road_edges": [
+    { "id":"re_s_l","geom":{"type":"LineString","coordinates":[[-1.75,-30],[-1.75,-12]]},"attrs":{} },
+    { "id":"re_s_r","geom":{"type":"LineString","coordinates":[[ 1.75,-30],[ 1.75,-12]]},"attrs":{} }
+  ],
+  "rough_area": {
+    "id":"rough_01",
+    "geom":{"type":"Polygon","coordinates":[[[-3,-12],[-3,12],[3,12],[3,-12],[-3,-12]]]},
+    "attrs":{}
+  }
+}
