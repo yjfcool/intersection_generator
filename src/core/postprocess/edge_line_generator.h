@@ -107,9 +107,11 @@ private:
             std::string exitGrpId  = conn->exitGroupId;
 
             Point2D leftStartPt  = findEdgePtInGroup(conn->enterLineId, true,  enterGrpId, inp, hwLeft);
-            Point2D leftEndPt    = findEdgePtInGroup(conn->exitLineId,  true,  exitGrpId,  inp, hwLeft);
+            // 退出端：退出线的tangentDir指向路口内（与生成曲线末端方向相反），
+            // 所以退出线视角的"left"是生成曲线视角的"right"，需要翻转isLeft
+            Point2D leftEndPt    = findEdgePtInGroup(conn->exitLineId,  false, exitGrpId,  inp, hwLeft);
             Point2D rightStartPt = findEdgePtInGroup(conn->enterLineId, false, enterGrpId, inp, hwRight);
-            Point2D rightEndPt   = findEdgePtInGroup(conn->exitLineId,  false, exitGrpId,  inp, hwRight);
+            Point2D rightEndPt   = findEdgePtInGroup(conn->exitLineId,  true,  exitGrpId,  inp, hwRight);
 
             Point2D enterTangLeft  = getEdgeTangent(conn->enterLineId, inp);
             Point2D exitTangLeft   = getEdgeTangent(conn->exitLineId,  inp);
