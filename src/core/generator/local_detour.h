@@ -149,6 +149,18 @@ public:
             appendOrig(curve, tCur, actualTIn, full);
 
             if (!det.empty()) {
+                // If bridging segment is zero-length (adjacent detours), verify G1 at splice
+                if (actualTIn <= tCur + 1e-6 && !full.empty() && det.size() >= 2) {
+                    // Two detours concatenated directly - check junction angle
+                    Point2D prevDir = (full.back() - full[full.size() > 1 ? full.size()-2 : 0]).normalized();
+                    Point2D nextDir = (det[1] - det[0]).normalized();
+                    double spliceAngle = std::acos(std::max(-1.0, std::min(1.0, prevDir.dot(nextDir))));
+                    if (spliceAngle > 0.5) { // > ~29 degrees - insert a short bridging segment
+                        // Add a small interpolation zone to smooth the splice
+                        Point2D blendPt = full.back() * 0.5 + det[0] * 0.5;
+                        full.push_back(blendPt);
+                    }
+                }
                 appendPolyline(det, full);
                 res.detourSegs++;
                 tCur = expandedIv.tOut;
@@ -302,8 +314,11 @@ private:
         if (enableGapAnalysis_) {
             auto gapResult = tryGapPassthrough(curve, iv);
             if (!gapResult.empty() && noViolation(gapResult)) {
-                Logger::debug("LocalDetour: gap passthrough successful");
-                return gapResult;
+                gapResult = checkCorridorConstraint(gapResult);
+                if (!gapResult.empty()) {
+                    Logger::debug("LocalDetour: gap passthrough successful");
+                    return gapResult;
+                }
             }
         }
 
@@ -614,12 +629,16 @@ private:
         Point2D chord = (iv.pOut - iv.pIn).normalized();
         Point2D perp = dir.rotLeft().normalized();
         Point2D tangMid;
-        // Fallback: when chord is nearly parallel to dir, perp.dot(chord) is near zero
-        // and sign can flip unpredictably. Use chord directly as tangMid in that case.
-        if (std::abs(perp.dot(chord)) < 0.1) {
-            tangMid = chord;
+        // Smooth blend: when perp.dot(chord) is small, blend perp toward chord
+        // to avoid a discontinuous jump at threshold boundary.
+        double perpChordDot = std::abs(perp.dot(chord));
+        Point2D perpAligned = (perp.dot(chord) >= 0) ? perp : (perp * -1.0);
+        if (perpChordDot < 0.3) {
+            // Blend weight: 0 when dot=0 (use chord), 1 when dot=0.3 (use perp)
+            double weight = perpChordDot / 0.3;
+            tangMid = safeNormalize(perpAligned * weight + chord * (1.0 - weight));
         } else {
-            tangMid = (perp.dot(chord) >= 0) ? perp : (perp * -1.0);
+            tangMid = perpAligned;
         }
 
         // Tangents at intermediate points: blend between tangIn/tangOut and tangMid
