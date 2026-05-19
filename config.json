@@ -81,7 +81,9 @@
     "desc_phase3_max_offset_ratio": "Phase3局部绕障的最大偏移比例。偏移量=safe_margin*此值。值越大绕障幅度越大但曲线变形越大。取值范围：1.0~10.0。",
     "phase3_max_offset_ratio": 4.0,
     "desc_phase3_check_spacing": "Phase3局部绕障的检测间距(米)。取值范围：0.05~0.5。",
-    "phase3_check_spacing": 0.15
+    "phase3_check_spacing": 0.15,
+    "desc_min_gap_width": "Gap analysis: minimum passable gap width between obstacles (meters). If gap exists >= this + 2*safe_margin, prefer passing through gap rather than large detour.",
+    "min_gap_width": 2.8
   },
   "non_intersect": {
     "desc_corridor_min_half_width": "走廊最小半宽(米)。每条曲线分配的最小横向空间。值越大曲线间距越大但可能超出路口边界。取值范围：0.1~2.0。",

@@ -58,6 +58,10 @@ struct ObstacleConfig {
     double phase3CheckSpacing   = 0.15;
     // 右侧通行优先：当左右绕障路径长度差 <= 此阈值时，优先选右侧绕障
     double rightSidePreferThreshold = 2.0; // 米
+    // Gap analysis: minimum passable gap width between obstacles (meters)
+    double minGapWidth = 2.8;
+    // Reduced safety margin ratio during gap passthrough (fraction of safeMargin)
+    double gapSafeMarginRatio = 0.6;
 };
 
 struct NonIntersectConfig {
