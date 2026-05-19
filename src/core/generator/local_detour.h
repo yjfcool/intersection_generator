@@ -51,6 +51,8 @@ class LocalDetour {
     double rightSidePreferThreshold_ = 2.0;
     // Gap analysis: minimum passable gap width between obstacles (meters)
     double minGapWidth_ = 2.8;
+    // Reduced safety margin for gap passthrough
+    double gapSafeMargin_;
 
     // G1 拼接的角度容差（度），仅用于诊断日志
     static constexpr double G1_TOL_DEG = 1.0;
@@ -61,12 +63,14 @@ public:
                 double checkSpacing = 0.15,
                 double maxOffsetRatio = 2.0,
                 double rightSidePreferThreshold = 2.0,
-                double minGapWidth = 2.8)
+                double minGapWidth = 2.8,
+                double gapSafeMarginRatio = 0.6)
         : idx_(idx), safeMargin_(safeMargin)
         , checkSpacing_(checkSpacing)
         , maxOffsetRatio_(maxOffsetRatio)
         , rightSidePreferThreshold_(rightSidePreferThreshold)
         , minGapWidth_(minGapWidth)
+        , gapSafeMargin_(safeMargin * gapSafeMarginRatio)
     {}
 
     // ══════════════════════════════════════════════
@@ -122,34 +126,20 @@ public:
             full.back()  = curve.ctrl[3];
         }
 
-        // Ensure G1 at start: direction from full[0] to full[1] must match T0
-        if (full.size() >= 2) {
+        // HARD G1 CHECK at endpoints - reject detour if violated
+        if (full.size() >= 3) {
             Point2D T0 = safeNormalize(curve.evalDeriv1(0.0));
-            double d01 = dist(full[0], full[1]);
-            if (d01 > EPS) {
-                Point2D dir01 = (full[1] - full[0]).normalized();
-                if (dir01.dot(T0) < 0.990) {  // > ~8 degree deviation
-                    Point2D corrected = full[0] + T0 * std::min(0.3, d01 * 0.5);
-                    // Only apply correction if it doesn't introduce obstacle violation
-                    if (idx_.minDist(corrected, safeMargin_ * 2) >= safeMargin_) {
-                        full[1] = corrected;
-                    }
-                }
+            Point2D actualDirStart = (full[1] - full[0]).normalized();
+            if (actualDirStart.dot(T0) < 0.95) {
+                Logger::warn("LocalDetour: G1 violated at start, rejecting detour");
+                res.success = false;
             }
-        }
-        // Ensure G1 at end: direction from full[size-2] to full.back() must match T3
-        if (full.size() >= 2) {
+
             Point2D T3 = safeNormalize(curve.evalDeriv1(1.0));
-            double dLast = dist(full[full.size()-2], full.back());
-            if (dLast > EPS) {
-                Point2D dirLast = (full.back() - full[full.size()-2]).normalized();
-                if (dirLast.dot(T3) < 0.990) {  // > ~8 degree deviation
-                    Point2D corrected = full.back() - T3 * std::min(0.3, dLast * 0.5);
-                    // Only apply correction if it doesn't introduce obstacle violation
-                    if (idx_.minDist(corrected, safeMargin_ * 2) >= safeMargin_) {
-                        full[full.size()-2] = corrected;
-                    }
-                }
+            Point2D actualDirEnd = (full.back() - full[full.size()-2]).normalized();
+            if (actualDirEnd.dot(T3) < 0.95) {
+                Logger::warn("LocalDetour: G1 violated at end, rejecting detour");
+                res.success = false;
             }
         }
 
@@ -280,45 +270,54 @@ private:
     }
 
     // ══════════════════════════════════════════════
-    // 2b. Gap passthrough: brute-force offset search in both perpendicular directions
-    //     Try small offsets and return the minimum that clears all obstacles
+    // 2b. Gap passthrough: use shallow detour with reduced safety margin
     // ══════════════════════════════════════════════
     Polyline tryGapPassthrough(const CubicBezier& curve, const ViolInterval& iv) const {
-        // Perpendicular directions from curve at violation midpoint
+        // Gap passthrough: try to route through a narrow gap between obstacles
         double tMid = 0.5 * (iv.tIn + iv.tOut);
         Point2D tangent = safeNormalize(curve.evalDeriv1(tMid));
         Point2D leftDir = tangent.rotLeft();
         Point2D rightDir = leftDir * (-1.0);
 
-        // Offsets to try (meters), smallest first
-        static const double offsets[] = {
-            0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4, 2.7, 3.0, 3.5, 4.0, 4.5, 5.0
-        };
-
-        // Gate: only attempt gap passthrough if at least one offset <= minGapWidth_.
-        // If all offsets that would be tried exceed the minimum gap width, the gap
-        // is too narrow for passthrough and we should skip to the full detour approach.
-        bool hasViableOffset = false;
-        for (double off : offsets) {
-            if (off <= minGapWidth_) { hasViableOffset = true; break; }
+        // Try small offsets with multi-seg approach first (smoother, more robust shape)
+        double stepOff = safeMargin_ * 0.3;
+        double gapMaxOff = minGapWidth_ * 0.8;
+        for (double off = stepOff; off <= gapMaxOff; off += stepOff) {
+            auto ptsL = buildMultiSegShallow(curve, iv, leftDir, off);
+            if (!ptsL.empty() && noViolation(ptsL) && !polylineSelfIntersects(ptsL)) {
+                Logger::debug("LocalDetour: gap passthrough left (multi), offset=" + std::to_string(off));
+                return ptsL;
+            }
+            auto ptsR = buildMultiSegShallow(curve, iv, rightDir, off);
+            if (!ptsR.empty() && noViolation(ptsR) && !polylineSelfIntersects(ptsR)) {
+                Logger::debug("LocalDetour: gap passthrough right (multi), offset=" + std::to_string(off));
+                return ptsR;
+            }
         }
-        if (!hasViableOffset) return {};
 
-        // Try each offset, both directions, return first (minimum) that works
-        for (double off : offsets) {
-            if (off > minGapWidth_) break;  // no point trying offsets beyond gap width
-            // Try left direction
-            auto resultL = buildGradualOffsetDetour(curve, iv, leftDir, off);
-            if (!resultL.empty() && noViolation(resultL) && !polylineSelfIntersects(resultL)) {
-                Logger::debug("LocalDetour: gap passthrough left, offset=" + std::to_string(off) + "m");
-                return resultL;
-            }
-            // Try right direction
-            auto resultR = buildGradualOffsetDetour(curve, iv, rightDir, off);
-            if (!resultR.empty() && noViolation(resultR) && !polylineSelfIntersects(resultR)) {
-                Logger::debug("LocalDetour: gap passthrough right, offset=" + std::to_string(off) + "m");
-                return resultR;
-            }
+        // Fallback: try single/two-seg via buildShallowDetour with full margin
+        double maxOffset = minGapWidth_ * 0.6;
+        auto resultL = buildShallowDetour(curve, iv, leftDir, maxOffset, false);
+        if (!resultL.empty()) {
+            Logger::debug("LocalDetour: gap passthrough left");
+            return resultL;
+        }
+        auto resultR = buildShallowDetour(curve, iv, rightDir, maxOffset, false);
+        if (!resultR.empty()) {
+            Logger::debug("LocalDetour: gap passthrough right");
+            return resultR;
+        }
+
+        // Last resort: try with reduced gap margin
+        resultL = buildShallowDetour(curve, iv, leftDir, maxOffset, true);
+        if (!resultL.empty()) {
+            Logger::debug("LocalDetour: gap passthrough left (relaxed)");
+            return resultL;
+        }
+        resultR = buildShallowDetour(curve, iv, rightDir, maxOffset, true);
+        if (!resultR.empty()) {
+            Logger::debug("LocalDetour: gap passthrough right (relaxed)");
+            return resultR;
         }
 
         return {};
@@ -326,75 +325,60 @@ private:
 
     // ══════════════════════════════════════════════
     // 3. 构建绕障折线（核心）
-    //    Prefer gradual offset approach first, fall back to binary search + buildTwoSeg
+    //    Shallow pot-lid detour first, then fallback to legacy binary search
     // ══════════════════════════════════════════════
     Polyline buildDetour(const CubicBezier& curve, const ViolInterval& iv) const
     {
-        // Try gap passthrough first (brute-force offset search)
+        // 1. Try gap passthrough first (reduced safety margin)
         auto gapResult = tryGapPassthrough(curve, iv);
         if (!gapResult.empty()) {
             Logger::debug("LocalDetour: gap passthrough successful");
-            logG1(iv, gapResult, "gap-pass");
             return gapResult;
         }
 
-        Point2D leftDir  = iv.pushDirLeft;
+        // 2. Determine preferred offset direction based on curvature
+        double tMid = 0.5 * (iv.tIn + iv.tOut);
+        double kSigned = curvatureSignAt(curve, tMid);
+
+        Point2D leftDir = iv.pushDirLeft;
         Point2D rightDir = iv.pushDirLeft * (-1.0);
 
-        // Try gradual offset detour at increasing offsets before falling back
+        // Prefer outward from center of curvature:
+        // If curving left (kSigned > 0), prefer pushing right (outward)
+        // If curving right (kSigned < 0), prefer pushing left (outward)
+        Point2D preferDir = (kSigned > 0.01) ? rightDir : leftDir;
+        Point2D altDir = (kSigned > 0.01) ? leftDir : rightDir;
+
+        // 3. Compute max offset
         double segLen = dist(iv.pIn, iv.pOut);
-        double maxGradualOff = segLen * 1.5;
-        double stepOff = safeMargin_ * 0.5;
+        double maxOffset = std::min(segLen * maxOffsetRatio_, safeMargin_ * 8.0);
+        maxOffset = std::max(maxOffset, safeMargin_ * 3.0);
 
-        // Track best solution per direction for the gradual approach
-        double bestOffL = -1.0, bestOffR = -1.0;
-        Polyline bestPtsL, bestPtsR;
-
-        for (double off = safeMargin_ * 1.0; off <= maxGradualOff; off += stepOff) {
-            // Try left if not yet found
-            if (bestOffL < 0) {
-                auto resL = buildGradualOffsetDetour(curve, iv, leftDir, off);
-                if (!resL.empty() && noViolation(resL) && !polylineSelfIntersects(resL)) {
-                    bestOffL = off;
-                    bestPtsL = std::move(resL);
-                }
-            }
-            // Try right if not yet found
-            if (bestOffR < 0) {
-                auto resR = buildGradualOffsetDetour(curve, iv, rightDir, off);
-                if (!resR.empty() && noViolation(resR) && !polylineSelfIntersects(resR)) {
-                    bestOffR = off;
-                    bestPtsR = std::move(resR);
-                }
-            }
-            // If both found, no need to keep searching
-            if (bestOffL >= 0 && bestOffR >= 0) break;
+        // 4. Try buildShallowDetour in BOTH directions, track best
+        Polyline bestPref, bestAlt;
+        bestPref = buildShallowDetour(curve, iv, preferDir, maxOffset, false);
+        if (!bestPref.empty()) {
+            Logger::debug("LocalDetour: shallow detour preferred dir");
+        }
+        bestAlt = buildShallowDetour(curve, iv, altDir, maxOffset, false);
+        if (!bestAlt.empty()) {
+            Logger::debug("LocalDetour: shallow detour alt dir");
         }
 
-        // Direction selection: prefer smaller offset; if equal (within 0.1m), prefer right
-        if (bestOffL >= 0 && bestOffR >= 0) {
-            if (bestOffR - bestOffL > 0.1) {
-                // Left has smaller offset
-                Logger::debug("LocalDetour: gradual left, offset=" + std::to_string(bestOffL));
-                logG1(iv, bestPtsL, "gradual-left");
-                return bestPtsL;
-            } else {
-                // Right is equal or smaller - prefer right
-                Logger::debug("LocalDetour: gradual right, offset=" + std::to_string(bestOffR));
-                logG1(iv, bestPtsR, "gradual-right");
-                return bestPtsR;
-            }
-        } else if (bestOffR >= 0) {
-            Logger::debug("LocalDetour: gradual right-only, offset=" + std::to_string(bestOffR));
-            logG1(iv, bestPtsR, "gradual-right-only");
-            return bestPtsR;
-        } else if (bestOffL >= 0) {
-            Logger::debug("LocalDetour: gradual left-only, offset=" + std::to_string(bestOffL));
-            logG1(iv, bestPtsL, "gradual-left-only");
-            return bestPtsL;
+        // Select best: prefer shorter path, or preferred direction if similar
+        if (!bestPref.empty() && !bestAlt.empty()) {
+            double lenPref = polylineLength(bestPref);
+            double lenAlt = polylineLength(bestAlt);
+            if (lenAlt < lenPref - rightSidePreferThreshold_)
+                return bestAlt;
+            return bestPref;
+        } else if (!bestPref.empty()) {
+            return bestPref;
+        } else if (!bestAlt.empty()) {
+            return bestAlt;
         }
 
-        // Fallback: binary search + buildTwoSeg/buildOneSeg/buildThreeSeg
+        // 5. Fallback: legacy binary search + buildTwoSeg/buildOneSeg/buildThreeSeg
         double offL = binarySearchOffset(curve, iv, leftDir);
         double offR = binarySearchOffset(curve, iv, rightDir);
 
@@ -403,49 +387,49 @@ private:
 
         struct DetourCandidate {
             Polyline pts;
-            double   pathLen = 0;
-            bool     isRight = false;
-            bool     valid   = false;
+            double pathLen = 0;
+            bool valid = false;
         };
 
-        auto tryBuild = [&](const Point2D& dir, double off, bool isRight) -> DetourCandidate {
+        auto tryBuild = [&](const Point2D& dir, double off) -> DetourCandidate {
             DetourCandidate c;
-            c.isRight = isRight;
             if (off < 0) return c;
             c.pts = buildTwoSeg(curve, iv, dir, off);
-            if (!c.pts.empty() && noViolation(c.pts) && !polylineSelfIntersects(c.pts)) { c.valid = true; c.pathLen = polylineLength(c.pts); return c; }
+            if (!c.pts.empty() && noViolation(c.pts) && !polylineSelfIntersects(c.pts) && passesG1Check(iv, c.pts)) {
+                c.valid = true; c.pathLen = polylineLength(c.pts); return c;
+            }
             c.pts = buildOneSeg(iv, dir, off);
-            if (!c.pts.empty() && noViolation(c.pts) && !polylineSelfIntersects(c.pts)) { c.valid = true; c.pathLen = polylineLength(c.pts); return c; }
+            if (!c.pts.empty() && noViolation(c.pts) && !polylineSelfIntersects(c.pts) && passesG1Check(iv, c.pts)) {
+                c.valid = true; c.pathLen = polylineLength(c.pts); return c;
+            }
             c.pts = buildThreeSeg(curve, iv, dir, off);
-            if (!c.pts.empty() && noViolation(c.pts) && !polylineSelfIntersects(c.pts)) { c.valid = true; c.pathLen = polylineLength(c.pts); return c; }
+            if (!c.pts.empty() && noViolation(c.pts) && !polylineSelfIntersects(c.pts) && passesG1Check(iv, c.pts)) {
+                c.valid = true; c.pathLen = polylineLength(c.pts); return c;
+            }
             return c;
         };
 
-        DetourCandidate candL = tryBuild(leftDir,  offL, false);
-        DetourCandidate candR = tryBuild(rightDir, offR, true);
+        DetourCandidate candPref = tryBuild(preferDir, (kSigned > 0.01) ? offR : offL);
+        DetourCandidate candAlt = tryBuild(altDir, (kSigned > 0.01) ? offL : offR);
 
-        if (!candL.valid && !candR.valid) {
+        if (!candPref.valid && !candAlt.valid) {
+            // Last resort: try with maximum offset
             double maxOff = segLen * maxOffsetRatio_;
-            candL = tryBuild(leftDir,  maxOff, false);
-            candR = tryBuild(rightDir, maxOff, true);
+            candPref = tryBuild(preferDir, maxOff);
+            candAlt = tryBuild(altDir, maxOff);
         }
 
-        if (candL.valid && candR.valid) {
-            double diff = candR.pathLen - candL.pathLen;
-            if (diff <= rightSidePreferThreshold_) {
-                logG1(iv, candR.pts, "right-prefer");
-                return candR.pts;
-            } else {
-                logG1(iv, candL.pts, "left-shorter");
-                return candL.pts;
-            }
-        } else if (candR.valid) {
-            logG1(iv, candR.pts, "right-only");
-            return candR.pts;
-        } else if (candL.valid) {
-            logG1(iv, candL.pts, "left-only");
-            return candL.pts;
+        if (candPref.valid && candAlt.valid) {
+            // Prefer shorter path, or preferred direction if similar length
+            if (candAlt.pathLen < candPref.pathLen - rightSidePreferThreshold_)
+                return candAlt.pts;
+            return candPref.pts;
+        } else if (candPref.valid) {
+            return candPref.pts;
+        } else if (candAlt.valid) {
+            return candAlt.pts;
         }
+
         return {};
     }
 
@@ -630,45 +614,164 @@ private:
     }
 
     // ══════════════════════════════════════════════
-    // 4e. Gradual-offset detour: trapezoidal lateral profile
-    //     Ramp up gradually, hold at full offset, ramp down gradually
-    //     Profile: 0% -> 0, 20% -> 0.4*offset, 40% -> full, 60% -> full, 80% -> 0.4*offset, 100% -> 0
-    //     dir is unit perpendicular direction, offset is positive scalar
+    // 4d. Shallow "pot-lid" shaped detour using single or two-segment cubic bezier
     // ══════════════════════════════════════════════
-    Polyline buildGradualOffsetDetour(
-        const CubicBezier& origCurve,
-        const ViolInterval& iv,
-        const Point2D& dir,
-        double offset) const
-    {
+    Polyline buildShallowDetour(const CubicBezier& origCurve, const ViolInterval& iv,
+                                const Point2D& dir, double maxOffset, bool useGapMargin) const {
+        double arcLen = dist(iv.pIn, iv.pOut);
+        if (arcLen < EPS) return {};
+
+        // --- Try single-segment first (smoothest possible) ---
+        for (double factor = 0.3; factor <= 1.2; factor += 0.1) {
+            double ctrlOffset = maxOffset * factor;
+            auto pts = buildSingleSegShallow(iv, dir, ctrlOffset, arcLen);
+            if (!pts.empty()) {
+                bool ok = useGapMargin ? noViolationGap(pts) : noViolation(pts);
+                if (ok && !polylineSelfIntersects(pts) && passesG1Check(iv, pts))
+                    return pts;
+            }
+        }
+
+        // --- Try two-segment ---
+        for (double off = safeMargin_ * 1.0; off <= maxOffset * 2.0; off += safeMargin_ * 0.4) {
+            auto pts = buildTwoSegShallow(origCurve, iv, dir, off);
+            if (!pts.empty()) {
+                bool ok = useGapMargin ? noViolationGap(pts) : noViolation(pts);
+                if (ok && !polylineSelfIntersects(pts)) {
+                    if (passesG1Check(iv, pts))
+                        return pts;
+                }
+            }
+        }
+
+        // --- Try multi-segment for wide intervals ---
+        double minOff = safeMargin_ * 1.0;
+        double maxOff = std::max(arcLen * 2.0, safeMargin_ * 6.0);
+        double stepOff = safeMargin_ * 0.5;
+        for (double off = minOff; off <= maxOff; off += stepOff) {
+            auto pts = buildMultiSegShallow(origCurve, iv, dir, off);
+            if (!pts.empty()) {
+                bool ok = useGapMargin ? noViolationGap(pts) : noViolation(pts);
+                if (ok)
+                    return pts;
+            }
+        }
+
+        return {};
+    }
+
+    // Single cubic bezier for the entire detour segment
+    // Control points placed to create shallow pot-lid shape with exact G1 at endpoints
+    Polyline buildSingleSegShallow(const ViolInterval& iv, const Point2D& dir,
+                                   double ctrlOffset, double arcLen) const {
+        if (ctrlOffset < EPS || arcLen < EPS) return {};
+
+        // For genuine G1 preservation: control points MUST be along endpoint tangents
+        double baseHandle = 0.40 * arcLen;
+
+        // Compute how much the tangent directions project onto the push direction
+        double tangInDirProj = iv.tangIn.dot(dir);
+        double tangOutDirProj = iv.tangOut.dot(dir);
+
+        // If both tangents are nearly perpendicular to dir (|proj| < 0.05),
+        // single segment cannot create offset in dir. Skip to two-segment.
+        if (std::abs(tangInDirProj) < 0.05 && std::abs(tangOutDirProj) < 0.05)
+            return {};
+
+        // Compute required handle to achieve ctrlOffset midpoint displacement
+        double h = baseHandle + ctrlOffset * 0.5;
+        h = std::min(h, arcLen * 0.65);
+
+        Point2D P1 = iv.pIn + iv.tangIn * h;
+        Point2D P2 = iv.pOut - iv.tangOut * h;
+
+        CubicBezier cb(iv.pIn, P1, P2, iv.pOut);
+
+        // Check that midpoint actually shifted enough in dir direction
+        Point2D midPt = cb.eval(0.5);
+        Point2D chordMid = (iv.pIn + iv.pOut) * 0.5;
+        double actualOffset = (midPt - chordMid).dot(dir);
+
+        if (actualOffset < ctrlOffset * 0.25) {
+            // Not enough offset achieved - single segment can't do it
+            return {};
+        }
+
+        auto pts = denseSample(cb, 60);
+        if (!pts.empty()) { pts.front() = iv.pIn; pts.back() = iv.pOut; }
+        return pts;
+    }
+
+    // Two-segment shallow detour: split at midpoint with offset
+    // Creates smooth pot-lid shape with G1 at endpoints and at the join
+    Polyline buildTwoSegShallow(const CubicBezier& origCurve, const ViolInterval& iv,
+                                const Point2D& dir, double midOffset) const {
+        if (midOffset < EPS) return {};
+
+        double tMid = 0.5 * (iv.tIn + iv.tOut);
+        Point2D origM = origCurve.eval(tMid);
+        Point2D M = origM + dir * midOffset;
+
+        // Tangent at midpoint: perpendicular to dir, aligned with chord direction
+        Point2D chord = (iv.pOut - iv.pIn).normalized();
+        Point2D perp = dir.rotLeft().normalized();
+        Point2D tangAtM = (perp.dot(chord) >= 0) ? perp : (perp * -1.0);
+
+        double d1 = dist(iv.pIn, M);
+        double d2 = dist(M, iv.pOut);
+        if (d1 < EPS || d2 < EPS) return {};
+
+        // Handle lengths
+        double h1_start = 0.38 * d1;
+        double h1_end = 0.38 * d1;
+        double h2_start = 0.38 * d2;
+        double h2_end = 0.38 * d2;
+
+        // Segment 1: pIn -> M
+        Point2D P1_1 = iv.pIn + iv.tangIn * h1_start;
+        Point2D P1_2 = M - tangAtM * h1_end;
+        CubicBezier seg1(iv.pIn, P1_1, P1_2, M);
+
+        // Segment 2: M -> pOut
+        Point2D P2_1 = M + tangAtM * h2_start;
+        Point2D P2_2 = iv.pOut - iv.tangOut * h2_end;
+        CubicBezier seg2(M, P2_1, P2_2, iv.pOut);
+
+        Polyline pts = denseSample(seg1, 60);
+        auto p2 = denseSample(seg2, 60);
+        for (size_t i = 1; i < p2.size(); ++i) pts.push_back(p2[i]);
+        if (!pts.empty()) { pts.front() = iv.pIn; pts.back() = iv.pOut; }
+        return pts;
+    }
+
+    // Multi-segment shallow detour for wide violation intervals
+    // Offsets intermediate points along original curve to create a smooth parallel path
+    Polyline buildMultiSegShallow(const CubicBezier& origCurve, const ViolInterval& iv,
+                                  const Point2D& dir, double offset) const {
         if (offset < EPS) return {};
         double span = iv.tOut - iv.tIn;
         if (span < 0.05) return {};
 
-        // 6 key points along the original curve with trapezoidal offset profile
-        double t0 = iv.tIn;
+        // 5 intermediate points with trapezoidal offset profile (like pot-lid)
         double t1 = iv.tIn + span * 0.20;
         double t2 = iv.tIn + span * 0.40;
         double t3 = iv.tIn + span * 0.60;
         double t4 = iv.tIn + span * 0.80;
-        double t5 = iv.tOut;
 
-        // Offset amounts per profile point
-        double off0 = 0.0;            // start: no offset
-        double off1 = 0.4 * offset;   // ramping up
-        double off2 = 1.0 * offset;   // full offset reached
-        double off3 = 1.0 * offset;   // holding at full offset
-        double off4 = 0.4 * offset;   // ramping down
-        double off5 = 0.0;            // end: no offset
+        // Trapezoidal profile: ramp up, hold, ramp down
+        double off1 = 0.4 * offset;
+        double off2 = 1.0 * offset;
+        double off3 = 1.0 * offset;
+        double off4 = 0.4 * offset;
 
-        Point2D P0 = origCurve.eval(t0) + dir * off0;  // = iv.pIn exactly
+        Point2D P0 = iv.pIn;
         Point2D P1 = origCurve.eval(t1) + dir * off1;
         Point2D P2 = origCurve.eval(t2) + dir * off2;
         Point2D P3 = origCurve.eval(t3) + dir * off3;
         Point2D P4 = origCurve.eval(t4) + dir * off4;
-        Point2D P5 = origCurve.eval(t5) + dir * off5;  // = iv.pOut exactly
+        Point2D P5 = iv.pOut;
 
-        // Tangent directions from original curve at each t-value
+        // Tangent directions from original curve
         Point2D tang0 = iv.tangIn;
         Point2D tang1 = safeNormalize(origCurve.evalDeriv1(t1));
         Point2D tang2 = safeNormalize(origCurve.evalDeriv1(t2));
@@ -676,7 +779,6 @@ private:
         Point2D tang4 = safeNormalize(origCurve.evalDeriv1(t4));
         Point2D tang5 = iv.tangOut;
 
-        // Build 5 cubic bezier segments with alpha=0.38 handle lengths
         constexpr double alpha = 0.38;
         auto mkSeg = [alpha](const Point2D& A, const Point2D& tA,
                              const Point2D& B, const Point2D& tB) -> CubicBezier {
@@ -691,7 +793,6 @@ private:
         CubicBezier s4 = mkSeg(P3, tang3, P4, tang4);
         CubicBezier s5 = mkSeg(P4, tang4, P5, tang5);
 
-        // Sample each segment densely (30 points per segment)
         Polyline pts = denseSample(s1, 30);
         auto sp2 = denseSample(s2, 30);
         for (size_t i = 1; i < sp2.size(); ++i) pts.push_back(sp2[i]);
@@ -702,9 +803,37 @@ private:
         auto sp5 = denseSample(s5, 30);
         for (size_t i = 1; i < sp5.size(); ++i) pts.push_back(sp5[i]);
 
-        // Force endpoints exact
         if (!pts.empty()) { pts.front() = iv.pIn; pts.back() = iv.pOut; }
         return pts;
+    }
+
+    // Hard G1 validation: check that the detour endpoints tangent directions match the original curve
+    bool passesG1Check(const ViolInterval& iv, const Polyline& pts) const {
+        if (pts.size() < 3) return false;
+
+        // Check start: direction from pts[0] to pts[1] must align with iv.tangIn
+        Point2D startDir = (pts[1] - pts[0]).normalized();
+        if (startDir.dot(iv.tangIn) < 0.95) return false;
+
+        // Check end: direction from pts[size-2] to pts.back() must align with iv.tangOut
+        Point2D endDir = (pts.back() - pts[pts.size()-2]).normalized();
+        if (endDir.dot(iv.tangOut) < 0.95) return false;
+
+        return true;
+    }
+
+    // Signed curvature at parameter t: positive = bending left, negative = bending right
+    double curvatureSignAt(const CubicBezier& curve, double t) const {
+        Point2D d1 = curve.evalDeriv1(t);
+        Point2D d2 = curve.evalDeriv2(t);
+        double crossVal = d1.cross(d2);  // positive if bending left
+        double denom = std::pow(d1.norm(), 3);
+        if (denom < EPS) return 0.0;
+        return crossVal / denom;
+    }
+
+    bool noViolationGap(const Polyline& pts) const {
+        return idx_.checkViolations(pts, gapSafeMargin_).empty();
     }
 
     // ══════════════════════════════════════════════
@@ -714,14 +843,8 @@ private:
     bool polylineSelfIntersects(const Polyline& pts) const {
         if (pts.size() < 5) return false;
         size_t n = pts.size();
-        // For large polylines, only check every 2nd segment in outer loop (stepI=2)
-        // but keep inner loop at stepJ=1 for full coverage (50% reduction, not 75%)
-        size_t stepI = 1, stepJ = 1;
-        if (n > 150) {
-            stepI = 2;
-        }
-        for (size_t i = 0; i + 3 < n; i += stepI) {
-            for (size_t j = i + 3; j + 1 < n; j += stepJ) {
+        for (size_t i = 0; i + 3 < n; ++i) {
+            for (size_t j = i + 3; j + 1 < n; ++j) {
                 if (segmentsIntersectStrict(pts[i], pts[i+1], pts[j], pts[j+1]))
                     return true;
             }
