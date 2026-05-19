@@ -49,6 +49,13 @@ class LocalDetour {
     double maxOffsetRatio_ = 2.0;
     // 右侧通行优先阈值（路径长度差 <= 此值时优先右侧）
     double rightSidePreferThreshold_ = 2.0;
+    // New optimization parameters
+    double minGapWidth_ = 2.8;
+    double maxCurvatureJump_ = 0.15;
+    double phase3BufTMax_ = 0.35;
+    bool   enableGapAnalysis_ = true;
+    bool   enableCorridorConstraint_ = true;
+    const Corridor* corridor_ = nullptr;
 
     // G1 拼接的角度容差（度），仅用于诊断日志
     static constexpr double G1_TOL_DEG = 1.0;
@@ -58,12 +65,24 @@ public:
                 double safeMargin,
                 double checkSpacing = 0.15,
                 double maxOffsetRatio = 2.0,
-                double rightSidePreferThreshold = 2.0)
+                double rightSidePreferThreshold = 2.0,
+                double minGapWidth = 2.8,
+                double maxCurvatureJump = 0.15,
+                double phase3BufTMax = 0.35,
+                bool   enableGapAnalysis = true,
+                bool   enableCorridorConstraint = true)
         : idx_(idx), safeMargin_(safeMargin)
         , checkSpacing_(checkSpacing)
         , maxOffsetRatio_(maxOffsetRatio)
         , rightSidePreferThreshold_(rightSidePreferThreshold)
+        , minGapWidth_(minGapWidth)
+        , maxCurvatureJump_(maxCurvatureJump)
+        , phase3BufTMax_(phase3BufTMax)
+        , enableGapAnalysis_(enableGapAnalysis)
+        , enableCorridorConstraint_(enableCorridorConstraint)
     {}
+
+    void setCorridor(const Corridor* c) { corridor_ = c; }
 
     // ══════════════════════════════════════════════
     // 主入口：对三次贝塞尔做局部绕障
@@ -91,24 +110,68 @@ public:
         Polyline full;
         double tCur = 0.0;
 
-        for (auto& iv : merged) {
-            // 追加原曲线 [tCur, tIn] 段（端点处会与绕障段 G1 拼接）
-            appendOrig(curve, tCur, iv.tIn, full);
+        for (size_t ivIdx = 0; ivIdx < merged.size(); ++ivIdx) {
+            auto& iv = merged[ivIdx];
+            // Determine expansion limits to avoid overlap with neighbors
+            double nextTIn = (ivIdx + 1 < merged.size()) ? merged[ivIdx + 1].tIn : 1.0;
 
-            // 构建绕障段（自动选最优方向和段数）
-            auto det = buildDetour(curve, iv);
+            // Curvature continuity feedback: retry with expanded interval if junction angle too large
+            Polyline det;
+            ViolInterval expandedIv = iv;
+            for (int retry = 0; retry < 4; ++retry) {
+                det = buildDetour(curve, expandedIv);
+                if (det.empty()) break;
+                double jAngle = measureJunctionAngle(curve, expandedIv, det);
+                if (jAngle <= maxCurvatureJump_) break;  // Smooth enough
+                // Expand interval by 15% each retry
+                double span = expandedIv.tOut - expandedIv.tIn;
+                double expand = span * 0.15;
+                expandedIv.tIn  = std::max(0.0, expandedIv.tIn - expand);
+                expandedIv.tOut = std::min(1.0, expandedIv.tOut + expand);
+                // Clamp to avoid overlap: tIn must not go below tCur, tOut must not exceed next interval's tIn
+                expandedIv.tIn  = std::max(tCur, expandedIv.tIn);
+                expandedIv.tOut = std::min(nextTIn, expandedIv.tOut);
+                expandedIv.pIn  = curve.eval(expandedIv.tIn);
+                expandedIv.pOut = curve.eval(expandedIv.tOut);
+                expandedIv.tangIn  = safeNormalize(curve.evalDeriv1(expandedIv.tIn));
+                expandedIv.tangOut = safeNormalize(curve.evalDeriv1(expandedIv.tOut));
+                // Recompute pushDirLeft at new midpoint
+                double newMidT = 0.5 * (expandedIv.tIn + expandedIv.tOut);
+                expandedIv.pushDirLeft = safeNormalize(curve.evalDeriv1(newMidT)).rotLeft();
+                Logger::debug("LocalDetour: curvature jump " + std::to_string(jAngle * 180.0 / M_PI)
+                              + " deg > " + std::to_string(maxCurvatureJump_ * 180.0 / M_PI)
+                              + " deg, expanding buffer (retry " + std::to_string(retry+1) + ")");
+            }
+
+            // Use expandedIv for the actual interval boundaries
+            // Append original curve from tCur to the (possibly expanded) start
+            double actualTIn = std::max(tCur, expandedIv.tIn);
+            appendOrig(curve, tCur, actualTIn, full);
 
             if (!det.empty()) {
+                // If bridging segment is zero-length (adjacent detours), verify G1 at splice
+                if (actualTIn <= tCur + 1e-6 && !full.empty() && det.size() >= 2) {
+                    // Two detours concatenated directly - check junction angle
+                    Point2D prevDir = (full.back() - full[full.size() > 1 ? full.size()-2 : 0]).normalized();
+                    Point2D nextDir = (det[1] - det[0]).normalized();
+                    double spliceAngle = std::acos(std::max(-1.0, std::min(1.0, prevDir.dot(nextDir))));
+                    if (spliceAngle > 0.5) { // > ~29 degrees - insert a short bridging segment
+                        // Add a small interpolation zone to smooth the splice
+                        Point2D blendPt = full.back() * 0.5 + det[0] * 0.5;
+                        full.push_back(blendPt);
+                    }
+                }
                 appendPolyline(det, full);
                 res.detourSegs++;
+                tCur = expandedIv.tOut;
             } else {
                 // 退化：追加原段（允许部分穿越）
-                appendOrig(curve, iv.tIn, iv.tOut, full);
+                appendOrig(curve, actualTIn, iv.tOut, full);
                 res.success = false;
                 Logger::warn("LocalDetour: detour failed for interval ["
                     + std::to_string(iv.tIn) + "," + std::to_string(iv.tOut) + "]");
+                tCur = iv.tOut;
             }
-            tCur = iv.tOut;
         }
         appendOrig(curve, tCur, 1.0, full);
 
@@ -169,9 +232,9 @@ private:
         std::vector<bool> vio(N + 1, false);
         for (auto& v : viols) vio[v.ptIdx] = true;
 
-        // 计算 P0→P3 的左法线（用于判断左/右）
+        // 计算 P0→P3 的左法线（用于判断左/右的 fallback）
         Point2D axis   = (curve.ctrl[3] - curve.ctrl[0]).normalized();
-        Point2D normL  = axis.rotLeft();
+        (void)axis; // kept for reference, per-interval tangent-based direction used instead
 
         // 自适应缓冲：以 t 参数空间为单位，至少 0.05（即 5%曲线参数）；
         // 同时根据 safeMargin 与平均段长动态调整。这是保证 G1 平滑过渡的关键：
@@ -179,7 +242,7 @@ private:
         const double curveLen = curve.arcLength(50);
         const double avgSegT  = (curveLen > EPS) ? (1.0 / std::max(8.0, curveLen / 0.5)) : 0.01;
         // 缓冲在 t 空间的目标宽度：不小于 0.06，且至少 = 2 倍 safeMargin 对应的弧长
-        double bufT = std::max(0.06, std::min(0.20,
+        double bufT = std::max(0.06, std::min(phase3BufTMax_,
                         2.0 * safeMargin_ / std::max(curveLen, 1.0)));
         int bufN = std::max(6, (int)std::round(bufT * N));
 
@@ -199,7 +262,10 @@ private:
             iv.pOut    = curve.eval(iv.tOut);
             iv.tangIn  = safeNormalize(curve.evalDeriv1(iv.tIn));
             iv.tangOut = safeNormalize(curve.evalDeriv1(iv.tOut));
-            iv.pushDirLeft = normL;
+            // Use tangent at violation midpoint for true travel direction
+            double tMidViol = (iS + iE) * 0.5 / N;
+            Point2D tangAtMid = safeNormalize(curve.evalDeriv1(tMidViol));
+            iv.pushDirLeft = tangAtMid.rotLeft();
             ivs.push_back(iv);
             i = iE + 1;
         }
@@ -244,6 +310,18 @@ private:
     // ══════════════════════════════════════════════
     Polyline buildDetour(const CubicBezier& curve, const ViolInterval& iv) const
     {
+        // Gap analysis: try passing through gaps between obstacles first
+        if (enableGapAnalysis_) {
+            auto gapResult = tryGapPassthrough(curve, iv);
+            if (!gapResult.empty() && noViolation(gapResult)) {
+                gapResult = checkCorridorConstraint(gapResult);
+                if (!gapResult.empty()) {
+                    Logger::debug("LocalDetour: gap passthrough successful");
+                    return gapResult;
+                }
+            }
+        }
+
         Point2D leftDir  = iv.pushDirLeft;
         Point2D rightDir = iv.pushDirLeft * (-1.0);
 
@@ -266,15 +344,32 @@ private:
             DetourCandidate c;
             c.isRight = isRight;
             if (off < 0) return c;
+            // For large offsets, try trapezoidal profile first (smoother transitions)
+            if (off > 2.0 * safeMargin_) {
+                c.pts = buildTrapezoidalDetour(curve, iv, dir, off);
+                if (!c.pts.empty() && noViolation(c.pts)) {
+                    c.pts = checkCorridorConstraint(c.pts);
+                    if (!c.pts.empty()) { c.valid = true; c.pathLen = polylineLength(c.pts); return c; }
+                }
+            }
             // 两段
             c.pts = buildTwoSeg(curve, iv, dir, off);
-            if (!c.pts.empty() && noViolation(c.pts)) { c.valid = true; c.pathLen = polylineLength(c.pts); return c; }
+            if (!c.pts.empty() && noViolation(c.pts)) {
+                c.pts = checkCorridorConstraint(c.pts);
+                if (!c.pts.empty()) { c.valid = true; c.pathLen = polylineLength(c.pts); return c; }
+            }
             // 单段
             c.pts = buildOneSeg(iv, dir, off);
-            if (!c.pts.empty() && noViolation(c.pts)) { c.valid = true; c.pathLen = polylineLength(c.pts); return c; }
+            if (!c.pts.empty() && noViolation(c.pts)) {
+                c.pts = checkCorridorConstraint(c.pts);
+                if (!c.pts.empty()) { c.valid = true; c.pathLen = polylineLength(c.pts); return c; }
+            }
             // 三段
             c.pts = buildThreeSeg(curve, iv, dir, off);
-            if (!c.pts.empty() && noViolation(c.pts)) { c.valid = true; c.pathLen = polylineLength(c.pts); return c; }
+            if (!c.pts.empty() && noViolation(c.pts)) {
+                c.pts = checkCorridorConstraint(c.pts);
+                if (!c.pts.empty()) { c.valid = true; c.pathLen = polylineLength(c.pts); return c; }
+            }
             return c;
         };
 
@@ -491,6 +586,197 @@ private:
         }
         if (!pts.empty()) { pts.front() = iv.pIn; pts.back() = iv.pOut; }
         return pts;
+    }
+
+    // ══════════════════════════════════════════════
+    // 4d. Curvature continuity measurement at junction points
+    // ══════════════════════════════════════════════
+    double measureJunctionAngle(const CubicBezier& curve, const ViolInterval& iv, const Polyline& detour) const {
+        if (detour.size() < 3) return 0.0;
+        // Angle at entry junction
+        Point2D beforeDir = safeNormalize(curve.evalDeriv1(iv.tIn));
+        Point2D afterDir = (detour[1] - detour[0]).normalized();
+        double dotIn = std::max(-1.0, std::min(1.0, beforeDir.dot(afterDir)));
+        double angleIn = std::acos(dotIn);
+        // Angle at exit junction
+        Point2D beforeEnd = (detour[detour.size()-1] - detour[detour.size()-2]).normalized();
+        Point2D afterEnd = safeNormalize(curve.evalDeriv1(iv.tOut));
+        double dotOut = std::max(-1.0, std::min(1.0, beforeEnd.dot(afterEnd)));
+        double angleOut = std::acos(dotOut);
+        return std::max(angleIn, angleOut);
+    }
+
+    // ══════════════════════════════════════════════
+    // 4e. Trapezoidal offset profile for smoother detours
+    //     Uses graduated 5-point offset: pIn -> 0.4*off -> full off -> 0.4*off -> pOut
+    // ══════════════════════════════════════════════
+    Polyline buildTrapezoidalDetour(const CubicBezier& origCurve, const ViolInterval& iv,
+                                     const Point2D& dir, double offset) const {
+        if (offset < EPS) return {};
+        double span = iv.tOut - iv.tIn;
+        if (span < EPS) return {};
+
+        // 5 key points: pIn, P25(0.4*offset), Pmid(full offset), P75(0.4*offset), pOut
+        double t25 = iv.tIn + span * 0.25;
+        double tMid = iv.tIn + span * 0.50;
+        double t75 = iv.tIn + span * 0.75;
+
+        Point2D P25 = origCurve.eval(t25) + dir * (0.4 * offset);
+        Point2D Pmid = origCurve.eval(tMid) + dir * offset;
+        Point2D P75 = origCurve.eval(t75) + dir * (0.4 * offset);
+
+        // Tangent directions along path
+        Point2D chord = (iv.pOut - iv.pIn).normalized();
+        Point2D perp = dir.rotLeft().normalized();
+        Point2D tangMid;
+        // Smooth blend: when perp.dot(chord) is small, blend perp toward chord
+        // to avoid a discontinuous jump at threshold boundary.
+        double perpChordDot = std::abs(perp.dot(chord));
+        Point2D perpAligned = (perp.dot(chord) >= 0) ? perp : (perp * -1.0);
+        if (perpChordDot < 0.3) {
+            // Blend weight: 0 when dot=0 (use chord), 1 when dot=0.3 (use perp)
+            double weight = perpChordDot / 0.3;
+            tangMid = safeNormalize(perpAligned * weight + chord * (1.0 - weight));
+        } else {
+            tangMid = perpAligned;
+        }
+
+        // Tangents at intermediate points: blend between tangIn/tangOut and tangMid
+        Point2D tang25 = safeNormalize(iv.tangIn * 0.5 + tangMid * 0.5);
+        Point2D tang75 = safeNormalize(tangMid * 0.5 + iv.tangOut * 0.5);
+
+        auto mkSeg = [&](const Point2D& A, const Point2D& tA,
+                        const Point2D& B, const Point2D& tB, double scale = 0.35) -> CubicBezier {
+            double d = dist(A, B);
+            if (d < 1e-9) return CubicBezier(A, A, B, B);
+            return CubicBezier(A, A + tA * (scale * d), B - tB * (scale * d), B);
+        };
+
+        CubicBezier s1 = mkSeg(iv.pIn, iv.tangIn, P25, tang25);
+        CubicBezier s2 = mkSeg(P25, tang25, Pmid, tangMid);
+        CubicBezier s3 = mkSeg(Pmid, tangMid, P75, tang75);
+        CubicBezier s4 = mkSeg(P75, tang75, iv.pOut, iv.tangOut);
+
+        Polyline pts = denseSample(s1, 30);
+        auto sp2 = denseSample(s2, 30);
+        for (size_t i = 1; i < sp2.size(); ++i) pts.push_back(sp2[i]);
+        auto sp3 = denseSample(s3, 30);
+        for (size_t i = 1; i < sp3.size(); ++i) pts.push_back(sp3[i]);
+        auto sp4 = denseSample(s4, 30);
+        for (size_t i = 1; i < sp4.size(); ++i) pts.push_back(sp4[i]);
+
+        if (!pts.empty()) { pts.front() = iv.pIn; pts.back() = iv.pOut; }
+        return pts;
+    }
+
+    // ══════════════════════════════════════════════
+    // 4f. Gap analysis: try passing through gaps between obstacles
+    // ══════════════════════════════════════════════
+    Polyline tryGapPassthrough(const CubicBezier& curve, const ViolInterval& iv) const {
+        // Scan perpendicular to curve at violation midpoint
+        double tMid = 0.5 * (iv.tIn + iv.tOut);
+        Point2D midPt = curve.eval(tMid);
+        Point2D tangent = safeNormalize(curve.evalDeriv1(tMid));
+        Point2D perpDir = tangent.rotLeft(); // perpendicular scan direction
+
+        // Sample distances to obstacles along perpendicular line
+        double scanRange = 15.0; // meters each side
+        int scanSteps = 30;
+        double stepSize = scanRange / scanSteps;
+
+        struct GapInfo { double center; double width; };
+        std::vector<GapInfo> gaps;
+
+        bool inGap = false;
+        double gapStart = -scanRange;
+
+        for (int i = -scanSteps; i <= scanSteps; ++i) {
+            double offset = i * stepSize;
+            Point2D probe = midPt + perpDir * offset;
+            double d = idx_.minDist(probe, std::max(safeMargin_ * 3, 5.0));
+            if (d < safeMargin_) {
+                if (inGap && (offset - gapStart) >= (minGapWidth_ + 2 * safeMargin_)) {
+                    gaps.push_back({(gapStart + offset) * 0.5, offset - gapStart});
+                }
+                inGap = false;
+            } else {
+                if (!inGap) { gapStart = offset; inGap = true; }
+            }
+        }
+        // Check final gap
+        if (inGap && (scanRange - gapStart) >= (minGapWidth_ + 2 * safeMargin_)) {
+            gaps.push_back({(gapStart + scanRange) * 0.5, scanRange - gapStart});
+        }
+
+        if (gaps.empty()) return {};
+
+        // Find the gap closest to the original curve position (offset=0)
+        double bestGapCenter = 0;
+        double bestDist = 1e18;
+        for (auto& g : gaps) {
+            if (std::abs(g.center) < bestDist) {
+                bestDist = std::abs(g.center);
+                bestGapCenter = g.center;
+            }
+        }
+
+        // Only use gap if it requires less offset than a full detour would
+        if (std::abs(bestGapCenter) < safeMargin_ * 0.5) return {}; // Already near gap
+
+        // Build a path through the gap using buildTwoSeg with reduced offset
+        Point2D gapDir = perpDir * (bestGapCenter > 0 ? 1.0 : -1.0);
+        double gapOffset = std::abs(bestGapCenter);
+        return buildTwoSeg(curve, iv, gapDir, gapOffset);
+    }
+
+    // ══════════════════════════════════════════════
+    // 4g. Corridor constraint check (soft constraint)
+    //     Returns candidate if within corridor, empty if exceeds
+    //     Uses signed distance heuristic against corridor boundaries
+    // ══════════════════════════════════════════════
+    Polyline checkCorridorConstraint(const Polyline& candidate) const {
+        if (!enableCorridorConstraint_ || !corridor_) return candidate;
+        if (!corridor_->leftBoundary && !corridor_->rightBoundary) return candidate;
+
+        bool hasLeft  = corridor_->leftBoundary  && corridor_->leftBoundary->size() >= 2;
+        bool hasRight = corridor_->rightBoundary && corridor_->rightBoundary->size() >= 2;
+
+        // Only enforce corridor constraint when BOTH boundaries are defined.
+        // With a single boundary, the corridor is unbounded on one side and
+        // rejecting based on distance from one edge is too aggressive.
+        if (!hasLeft || !hasRight) return candidate;
+
+        // When both boundaries exist, reject a candidate if any point is far
+        // from both (i.e., outside the corridor envelope).
+        // Threshold: if point is > 5x minHalfWidth from BOTH boundaries,
+        // it's likely outside the corridor entirely.
+        double threshold = std::max(corridor_->minHalfWidth * 5.0, 3.0); // at least 3m
+        for (auto& pt : candidate) {
+            double dL = pointToPolylineDist(pt, *corridor_->leftBoundary);
+            double dR = pointToPolylineDist(pt, *corridor_->rightBoundary);
+            if (dL > threshold && dR > threshold) {
+                return {}; // Point is far from both boundaries - outside corridor
+            }
+        }
+        return candidate;
+    }
+
+    static double pointToPolylineDist(const Point2D& pt, const Polyline& poly) {
+        double minD = std::numeric_limits<double>::max();
+        for (size_t i = 0; i + 1 < poly.size(); ++i) {
+            double d = pointToSegDist(pt, poly[i], poly[i+1]);
+            if (d < minD) minD = d;
+        }
+        return minD;
+    }
+
+    static double pointToSegDist(const Point2D& p, const Point2D& a, const Point2D& b) {
+        Point2D ab = b - a;
+        double len2 = ab.x * ab.x + ab.y * ab.y;
+        if (len2 < 1e-12) return dist(p, a);
+        double t = std::max(0.0, std::min(1.0, ((p - a).dot(ab)) / len2));
+        Point2D proj = a + ab * t;
+        return dist(p, proj);
     }
 
     // ══════════════════════════════════════════════
