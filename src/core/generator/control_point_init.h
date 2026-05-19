@@ -51,8 +51,12 @@ public:
         if(turn == TurnType::U_TURN_LEFT || turn == TurnType::U_TURN_RIGHT){
             needTwo = true;
         } else {
-            // 检查初始曲率
-            if(res.single.maxCurvature(30) > cfg.maxCurvature) needTwo = true;
+            // 检查初始曲率（带容差：仅超阈值 10% 以上才触发复合贝塞尔）
+            // 对于普通转弯，微超阈值时单段贝塞尔仍可接受，
+            // 使用复合贝塞尔反而引入不必要的复杂性
+            double maxK = res.single.maxCurvature(30);
+            double threshold = cfg.maxCurvature * 1.10; // 10% tolerance
+            if(maxK > threshold) needTwo = true;
         }
 
         if(needTwo){
