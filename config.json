@@ -83,15 +83,7 @@
     "desc_phase3_check_spacing": "Phase3局部绕障的检测间距(米)。取值范围：0.05~0.5。",
     "phase3_check_spacing": 0.15,
     "desc_min_gap_width": "Gap analysis: minimum passable gap width between obstacles (meters). If gap exists >= this + 2*safe_margin, prefer passing through gap rather than large detour.",
-    "min_gap_width": 2.8,
-    "desc_max_curvature_jump": "Maximum allowable curvature jump (radians) at detour junction points. If exceeded, buffer zone expands and detour retries for smoother transition.",
-    "max_curvature_jump": 0.15,
-    "desc_phase3_buf_t_max": "Maximum adaptive buffer in parameter space for Phase3 local detour. Larger values create wider transition zones for smoother junctions. Range: 0.20~0.50.",
-    "phase3_buf_t_max": 0.35,
-    "desc_enable_gap_analysis": "Enable gap-between-obstacles analysis. When multiple obstacles exist, prefer passing through viable gaps rather than large detours.",
-    "enable_gap_analysis": true,
-    "desc_enable_corridor_constraint": "Enable corridor boundary checking in Phase3 local detour. Ensures detour curves stay within the intersection entry/exit corridor.",
-    "enable_corridor_constraint": true
+    "min_gap_width": 2.8
   },
   "non_intersect": {
     "desc_corridor_min_half_width": "走廊最小半宽(米)。每条曲线分配的最小横向空间。值越大曲线间距越大但可能超出路口边界。取值范围：0.1~2.0。",
