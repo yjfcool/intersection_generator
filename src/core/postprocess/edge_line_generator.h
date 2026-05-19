@@ -104,6 +104,7 @@ public:
                 const std::string& exitLineI1 = sorted[i+1]->exitLineId;
 
                 // Enter side: lane_i's right edge == lane_{i+1}'s left edge
+                // Compare by geometry (connectionPt) since different IDs may represent the same physical edge
                 auto enterI = inp.centerlines.find(enterLineI);
                 auto enterI1 = inp.centerlines.find(enterLineI1);
                 bool enterShared = false;
@@ -111,24 +112,53 @@ public:
                 if(enterI != inp.centerlines.end() && enterI1 != inp.centerlines.end()) {
                     const std::string& rightOfI = enterI->second.rightEdgelineId;
                     const std::string& leftOfI1 = enterI1->second.leftEdgelineId;
-                    if(!rightOfI.empty() && rightOfI == leftOfI1) {
-                        enterShared = true;
-                        sharedEnterEdgeId = rightOfI;
+                    if(!rightOfI.empty() && !leftOfI1.empty()) {
+                        // Check if IDs match directly (nCL+1 convention)
+                        if(rightOfI == leftOfI1) {
+                            enterShared = true;
+                            sharedEnterEdgeId = rightOfI;
+                        } else {
+                            // Check if connection points match (2*nCL convention with identical geometry)
+                            auto rightEdgeIt = inp.edgelines.find(rightOfI);
+                            auto leftEdgeIt = inp.edgelines.find(leftOfI1);
+                            if(rightEdgeIt != inp.edgelines.end() && leftEdgeIt != inp.edgelines.end()) {
+                                double ptDist = dist(rightEdgeIt->second.connectionPt, leftEdgeIt->second.connectionPt);
+                                if(ptDist < 0.01) {
+                                    enterShared = true;
+                                    sharedEnterEdgeId = rightOfI;
+                                }
+                            }
+                        }
                     }
                 }
 
-                // Exit side: since exit tangent points inward (opposite to travel direction),
-                // lane_i's left at exit == lane_{i+1}'s right at exit
+                // Exit side: lane_i's right edge == lane_{i+1}'s left edge
+                // (same pattern as enter side - shared edge is between adjacent lanes)
+                // Compare by geometry (connectionPt) since different IDs may represent the same physical edge
                 auto exitI = inp.centerlines.find(exitLineI);
                 auto exitI1 = inp.centerlines.find(exitLineI1);
                 bool exitShared = false;
                 std::string sharedExitEdgeId;
                 if(exitI != inp.centerlines.end() && exitI1 != inp.centerlines.end()) {
-                    const std::string& leftOfI = exitI->second.leftEdgelineId;
-                    const std::string& rightOfI1 = exitI1->second.rightEdgelineId;
-                    if(!leftOfI.empty() && leftOfI == rightOfI1) {
-                        exitShared = true;
-                        sharedExitEdgeId = leftOfI;
+                    const std::string& rightOfI = exitI->second.rightEdgelineId;
+                    const std::string& leftOfI1 = exitI1->second.leftEdgelineId;
+                    if(!rightOfI.empty() && !leftOfI1.empty()) {
+                        // Check if IDs match directly (nCL+1 convention)
+                        if(rightOfI == leftOfI1) {
+                            exitShared = true;
+                            sharedExitEdgeId = rightOfI;
+                        } else {
+                            // Check if connection points match (2*nCL convention with identical geometry)
+                            auto rightEdgeIt = inp.edgelines.find(rightOfI);
+                            auto leftEdgeIt = inp.edgelines.find(leftOfI1);
+                            if(rightEdgeIt != inp.edgelines.end() && leftEdgeIt != inp.edgelines.end()) {
+                                double ptDist = dist(rightEdgeIt->second.connectionPt, leftEdgeIt->second.connectionPt);
+                                if(ptDist < 0.01) {
+                                    exitShared = true;
+                                    sharedExitEdgeId = rightOfI;
+                                }
+                            }
+                        }
                     }
                 }
 
