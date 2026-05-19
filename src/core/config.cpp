@@ -57,6 +57,10 @@ Config loadConfig(const std::string& path){
         cfg.bezier.alphaUturn            = jget(c,"alpha_uturn",0.50);
         cfg.bezier.maxCurvature          = jget(c,"max_curvature",0.333);
         cfg.bezier.twoSegMidOffsetRatio  = jget(c,"two_segment_mid_offset_ratio",0.30);
+        if(c.contains("force_single_segment"))
+            cfg.bezier.forceSingleSegment = c["force_single_segment"].get<bool>();
+        if(c.contains("uturn_composite_dot_threshold"))
+            cfg.bezier.uturnCompositeDotThreshold = c["uturn_composite_dot_threshold"].get<double>();
     }
     if(j.contains("sampling")){
         auto& c = j["sampling"];
@@ -88,6 +92,10 @@ Config loadConfig(const std::string& path){
         cfg.nonIntersect.corridorMinHalfWidth = jget(c,"corridor_min_half_width",0.3);
         cfg.nonIntersect.enableMidUturnExclude= jget(c,"enable_mid_uturn_exclude",true);
         cfg.nonIntersect.maxFixIter           = jget(c,"max_fix_iter",20);
+        cfg.nonIntersect.allowUturnIntersect  = jget(c,"allow_uturn_intersect",true);
+        cfg.nonIntersect.extremeCrossAngleThreshold = jget(c,"extreme_cross_angle_threshold",150.0);
+        cfg.nonIntersect.spreadGradualRatio   = jget(c,"spread_gradual_ratio",0.3);
+        cfg.nonIntersect.globalMaxIter        = jget(c,"global_max_iter",80);
     }
     if(j.contains("conflict")){
         auto& c = j["conflict"];

@@ -66,7 +66,8 @@ public:
         const Point2D&     T0,
         const Point2D&     T3,
         const std::string& samplingMode  = "adaptive",
-        double             samplingParam = 0.5)
+        double             samplingParam = 0.5,
+        const std::vector<Polyline>* existingCurves = nullptr)
     {
         AvoidanceResult result;
         result.curve = initial;
@@ -77,6 +78,11 @@ public:
         bool ok = phase1(result.curve, safeMargin, T0, T3);
         if (ok) {
             Logger::debug("ObstacleAvoider Phase1 success");
+            // Cross-check with existing curves: try to avoid introducing new intersections
+            if (existingCurves) {
+                result.curve = crossCheckExisting(initial, result.curve, safeMargin,
+                                                  T0, T3, *existingCurves);
+            }
             return result;
         }
 
@@ -85,6 +91,11 @@ public:
             ok = phase2(result.curve, safeMargin, T0, T3);
             if (ok) {
                 Logger::debug("ObstacleAvoider Phase2 success");
+                // Cross-check with existing curves
+                if (existingCurves) {
+                    result.curve = crossCheckExisting(initial, result.curve, safeMargin,
+                                                      T0, T3, *existingCurves);
+                }
                 return result;
             }
         }
@@ -314,7 +325,87 @@ private:
     }
 
     // ══════════════════════════════════
-    // 辅助：取折线末尾切线方向
+    // Cross-check: after Phase1/2 success, try to avoid introducing new
+    // intersections with existing curves. Best-effort only - never compromises
+    // obstacle avoidance. Tries 3 interpolation points (25%, 50%, 75%)
+    // to find a viable middle-ground.
+    // ══════════════════════════════════
+    CubicBezier crossCheckExisting(
+        const CubicBezier& original,
+        const CubicBezier& avoidResult,
+        double safeMargin,
+        const Point2D& T0,
+        const Point2D& T3,
+        const std::vector<Polyline>& existingCurves)
+    {
+        if (existingCurves.empty()) return avoidResult;
+
+        Polyline avoidPts = avoidResult.sampleBySpacing(cfg_.checkSpacing);
+        Polyline origPts  = original.sampleBySpacing(cfg_.checkSpacing);
+
+        // Check if avoidance result intersects existing curves
+        bool avoidIntersects = false;
+        for (auto& ec : existingCurves) {
+            if (polylinesIntersectExcludeEndpoints(avoidPts, ec)) {
+                avoidIntersects = true;
+                break;
+            }
+        }
+        if (!avoidIntersects) return avoidResult; // no problem
+
+        // Check if original did NOT intersect (avoidance introduced the intersection)
+        bool origIntersects = false;
+        for (auto& ec : existingCurves) {
+            if (polylinesIntersectExcludeEndpoints(origPts, ec)) {
+                origIntersects = true;
+                break;
+            }
+        }
+        if (origIntersects) return avoidResult; // original already intersected, can't help
+
+        // Try 3 interpolation points (25%, 50%, 75%) between original and avoidance
+        const Point2D& P0 = avoidResult.ctrl[0];
+        const Point2D& P3 = avoidResult.ctrl[3];
+        double alphaOrig  = std::max(0.10, std::min(0.85, original.getAlpha(T0)));
+        double betaOrig   = std::max(0.10, std::min(0.85, original.getBeta(T3)));
+        double alphaAvoid = std::max(0.10, std::min(0.85, avoidResult.getAlpha(T0)));
+        double betaAvoid  = std::max(0.10, std::min(0.85, avoidResult.getBeta(T3)));
+
+        // Try lerp factors closest to avoidance first (prefer obstacle clearance)
+        static constexpr double lerpFactors[] = {0.75, 0.50, 0.25};
+
+        for (double factor : lerpFactors) {
+            double alphaLerp = alphaOrig + factor * (alphaAvoid - alphaOrig);
+            double betaLerp  = betaOrig  + factor * (betaAvoid  - betaOrig);
+
+            CubicBezier lerpCurve = CubicBezier::fromAlphaBeta(P0, T0, P3, T3, alphaLerp, betaLerp);
+            Polyline lerpPts = lerpCurve.sampleBySpacing(cfg_.checkSpacing);
+
+            // Check if this lerp point still avoids obstacles
+            auto viols = idx_.checkViolations(lerpPts, safeMargin);
+            if (!viols.empty()) continue; // obstacle violation - skip this factor
+
+            // Check if this lerp point avoids intersections with existing curves
+            bool lerpIntersects = false;
+            for (auto& ec : existingCurves) {
+                if (polylinesIntersectExcludeEndpoints(lerpPts, ec)) {
+                    lerpIntersects = true;
+                    break;
+                }
+            }
+            if (!lerpIntersects) {
+                Logger::debug("ObstacleAvoider: crossCheck found viable solution at lerp=" +
+                    std::to_string(factor));
+                return lerpCurve;
+            }
+        }
+
+        // None of the interpolation points worked - keep the avoidance result (obstacle priority)
+        return avoidResult;
+    }
+
+    // ══════════════════════════════════
+    // 辅助：取折线末尾切線方向
     // ══════════════════════════════════
     static Point2D tangentAtEnd(const Polyline& pts) {
         if (pts.size() < 2) return {0, 1};

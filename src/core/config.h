@@ -28,6 +28,8 @@ struct BezierConfig {
     double alphaUturn    = 0.50;
     double maxCurvature  = 0.333;       // 触发两段的曲率阈值(1/m)
     double twoSegMidOffsetRatio = 0.30;
+    bool   forceSingleSegment = true;
+    double uturnCompositeDotThreshold = 0.5;
 };
 
 struct SamplingConfig {
@@ -62,6 +64,10 @@ struct NonIntersectConfig {
     double corridorMinHalfWidth  = 0.3;
     bool   enableMidUturnExclude = true;
     int    maxFixIter = 60;
+    bool   allowUturnIntersect = true;        // whether U-turn curves can intersect each other
+    double extremeCrossAngleThreshold = 150.0; // degrees - skip NI for extreme crossings
+    double spreadGradualRatio = 0.3;          // taper ratio at curve endpoints
+    int    globalMaxIter = 80;                // max iterations for multi-strategy solver
 };
 
 struct ConflictConfig {

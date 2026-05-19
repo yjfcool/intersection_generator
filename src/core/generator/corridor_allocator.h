@@ -90,13 +90,14 @@ public:
         }
     }
 
-    // 返回生成顺序排好的所有连通关系
+    // Returns connections sorted for generation order.
+    // Primary: by enter group (keep same group together).
+    // Secondary: by lateralPriority (straight first, then right, left, uturn).
+    // Tertiary: for same priority, stable order by laneOrder (already encoded in priority).
     std::vector<Connection> sortedConnections() const {
         auto conns = inp_.connections;
-        // 先按进入组的地理位置排（不影响逻辑），再按 lateralPriority 全局排序
         std::stable_sort(conns.begin(), conns.end(),
             [](const Connection& a, const Connection& b){
-                // 先按进入组ID（保证同组在一起），再按优先级
                 if(a.enterGroupId != b.enterGroupId)
                     return a.enterGroupId < b.enterGroupId;
                 return a.lateralPriority < b.lateralPriority;

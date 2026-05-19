@@ -49,11 +49,19 @@ public:
         // 判断是否需要两段
         bool needTwo = false;
         if(turn == TurnType::U_TURN_LEFT || turn == TurnType::U_TURN_RIGHT){
-            needTwo = true;
-        } else {
-            // 检查初始曲率
-            if(res.single.maxCurvature(30) > cfg.maxCurvature) needTwo = true;
+            // U-turn: only use composite when tangents are nearly same direction
+            // (true geometric U-turn where single segment can't achieve enough depth)
+            double dotT0T3 = T0.dot(T3);
+            if(dotT0T3 > cfg.uturnCompositeDotThreshold) {
+                needTwo = true;
+            }
+        } else if(!cfg.forceSingleSegment) {
+            // Legacy mode: use curvature threshold to decide (not recommended)
+            double maxK = res.single.maxCurvature(30);
+            double threshold = cfg.maxCurvature * 1.10;
+            if(maxK > threshold) needTwo = true;
         }
+        // If not using composite, check curvature for warning flag (handled by caller)
 
         if(needTwo){
             res.useComposite = true;
