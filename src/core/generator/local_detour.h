@@ -719,29 +719,24 @@ private:
         if (!enableCorridorConstraint_ || !corridor_) return candidate;
         if (!corridor_->leftBoundary && !corridor_->rightBoundary) return candidate;
 
-        // Check if any point exceeds corridor bounds using distance heuristic
+        bool hasLeft  = corridor_->leftBoundary  && corridor_->leftBoundary->size() >= 2;
+        bool hasRight = corridor_->rightBoundary && corridor_->rightBoundary->size() >= 2;
+
+        // Only enforce corridor constraint when BOTH boundaries are defined.
+        // With a single boundary, the corridor is unbounded on one side and
+        // rejecting based on distance from one edge is too aggressive.
+        if (!hasLeft || !hasRight) return candidate;
+
+        // When both boundaries exist, reject a candidate if any point is far
+        // from both (i.e., outside the corridor envelope).
+        // Threshold: if point is > 5x minHalfWidth from BOTH boundaries,
+        // it's likely outside the corridor entirely.
+        double threshold = std::max(corridor_->minHalfWidth * 5.0, 3.0); // at least 3m
         for (auto& pt : candidate) {
-            // Check left boundary independently
-            if (corridor_->leftBoundary && corridor_->leftBoundary->size() >= 2) {
-                double minD = pointToPolylineDist(pt, *corridor_->leftBoundary);
-                if (minD > corridor_->minHalfWidth * 3.0) {
-                    // Also check right boundary if available
-                    if (corridor_->rightBoundary && corridor_->rightBoundary->size() >= 2) {
-                        double minDR = pointToPolylineDist(pt, *corridor_->rightBoundary);
-                        if (minDR > corridor_->minHalfWidth * 3.0) {
-                            return {}; // exceeds corridor on both sides
-                        }
-                    } else {
-                        // Only left boundary defined and point is far from it
-                        return {};
-                    }
-                }
-            } else if (corridor_->rightBoundary && corridor_->rightBoundary->size() >= 2) {
-                // Only right boundary defined
-                double minDR = pointToPolylineDist(pt, *corridor_->rightBoundary);
-                if (minDR > corridor_->minHalfWidth * 3.0) {
-                    return {};
-                }
+            double dL = pointToPolylineDist(pt, *corridor_->leftBoundary);
+            double dR = pointToPolylineDist(pt, *corridor_->rightBoundary);
+            if (dL > threshold && dR > threshold) {
+                return {}; // Point is far from both boundaries - outside corridor
             }
         }
         return candidate;
