@@ -5,21 +5,24 @@
 #include "../../utils/geom_utils.h"
 #include "../../utils/logger.h"
 #include <map>
+#include <set>
 #include <optional>
 
 /**
- * 车道边线生成（优化版）
+ * Edge line generator (optimized shared-edge version)
  *
- * 策略：
- *  1. 对中心线做等距偏移得到粗边线
- *  2. 首尾端点严格对齐路口外对应边线端点
- *  3. 首尾各用三次贝塞尔重拟合过渡段（保证 G1 平滑接入路口外边线）
- *  4. 中间段做移动平均平滑，消除偏移产生的局部抖动
+ * Strategy:
+ *  1. Group generated centerlines by (enterGroupId, exitGroupId) pairs
+ *  2. Sort within each group by enter lane order (inner to outer)
+ *  3. Detect "special" connections that cross other lanes in the same group
+ *  4. For adjacent non-special lanes that share edges on BOTH enter and exit sides,
+ *     generate a single shared midline (cubic Bezier) instead of two independent edges
+ *  5. Outermost right, innermost left, and special lane edges use independent generation
  *
- * 关键改进（相对旧版）：
- *  - 法线计算：使用两侧线段的角平分线法线（而非方向平均再旋转）
- *  - 首尾平滑范围更大，用贝塞尔严格保 G1
- *  - 中间段平滑消除折角
+ * Shared midline properties:
+ *  - G1 smooth at both endpoints
+ *  - Endpoints exactly coincide with shared edge connection points
+ *  - Uses CubicBezier::fromAlphaBeta with alpha=0.38, beta=0.38
  */
 class EdgeLineGenerator {
     const Config& cfg_;
@@ -32,36 +35,181 @@ public:
         const IntersectionInput& inp)
     {
         std::vector<GeneratedEdgeLine> result;
-        // 用于回填 centerline 的左右边线ID
         std::map<std::string, std::pair<std::string,std::string>> edgeIdMap;
 
-        // 建立 connectionId → 已生成中心线 的映射
+        // Build connectionId -> GeneratedCenterline mapping
         std::map<std::string, const GeneratedCenterline*> clMap;
         for(auto& gcl : centerlines) clMap[gcl.connectionId] = &gcl;
 
-        // 按进入组处理
-        for(auto& [gid, grp] : inp.laneGroups){
-            if(grp.type != GroupType::ENTER) continue;
+        // Build connection id -> Connection mapping
+        std::map<std::string, const Connection*> connMap;
+        for(auto& conn : inp.connections) connMap[conn.id] = &conn;
 
-            // 找到该组的所有连通关系（按laneOrder排列）
-            std::vector<std::pair<int,const Connection*>> orderedConns;
-            for(auto& conn : inp.connections){
-                if(conn.enterGroupId != gid) continue;
-                auto clit = inp.centerlines.find(conn.enterLineId);
-                int order = (clit!=inp.centerlines.end()) ? clit->second.laneOrder : 0;
-                orderedConns.push_back({order, &conn});
-            }
-            std::sort(orderedConns.begin(), orderedConns.end(),
-                [](auto& a, auto& b){ return a.first < b.first; });
+        // Group generated centerlines by (enterGroupId, exitGroupId)
+        using GroupKey = std::pair<std::string, std::string>;
+        std::map<GroupKey, std::vector<const GeneratedCenterline*>> pairGroups;
 
-            // 为相邻中心线对生成共享边线
-            generateGroupEdgeLines(orderedConns, grp, inp, clMap, result, edgeIdMap);
+        for(auto& gcl : centerlines) {
+            auto cIt = connMap.find(gcl.connectionId);
+            if(cIt == connMap.end()) continue;
+            const Connection* conn = cIt->second;
+            GroupKey key = {conn->enterGroupId, conn->exitGroupId};
+            pairGroups[key].push_back(&gcl);
         }
 
-        // 回填 GeneratedCenterline 的 leftEdgelineId / rightEdgelineId
-        for(auto& gcl : centerlines){
+        // Process each (enterGroupId, exitGroupId) group
+        for(auto& [key, groupCls] : pairGroups) {
+            // Sort by enter lane order (inner to outer)
+            std::vector<const GeneratedCenterline*> sorted = groupCls;
+            std::sort(sorted.begin(), sorted.end(),
+                [&](const GeneratedCenterline* a, const GeneratedCenterline* b) {
+                    auto aIt = inp.centerlines.find(a->enterLineId);
+                    auto bIt = inp.centerlines.find(b->enterLineId);
+                    int aOrder = (aIt != inp.centerlines.end()) ? aIt->second.laneOrder : 0;
+                    int bOrder = (bIt != inp.centerlines.end()) ? bIt->second.laneOrder : 0;
+                    return aOrder < bOrder;
+                });
+
+            // Detect special connections (those that cross other lanes in the group)
+            std::set<std::string> specialIds;
+            if(sorted.size() > 1) {
+                for(size_t i = 0; i < sorted.size(); ++i) {
+                    for(size_t j = i+1; j < sorted.size(); ++j) {
+                        if(sorted[i]->geom.size() < 2 || sorted[j]->geom.size() < 2) continue;
+                        if(polylinesIntersectExcludeEndpoints(sorted[i]->geom, sorted[j]->geom)) {
+                            specialIds.insert(sorted[i]->id);
+                            specialIds.insert(sorted[j]->id);
+                        }
+                    }
+                }
+            }
+
+            // Determine which adjacent pairs share edges on both sides
+            // sharedBetween[i] = true means lanes i and i+1 share an edge
+            std::vector<bool> sharedBetween(sorted.size() > 0 ? sorted.size()-1 : 0, false);
+            // Store shared edge IDs for each pair
+            struct SharedEdgeInfo {
+                std::string enterEdgeId;
+                std::string exitEdgeId;
+            };
+            std::vector<SharedEdgeInfo> sharedEdgeInfos(sharedBetween.size());
+
+            for(size_t i = 0; i+1 < sorted.size(); ++i) {
+                if(specialIds.count(sorted[i]->id) || specialIds.count(sorted[i+1]->id))
+                    continue;
+
+                const std::string& enterLineI = sorted[i]->enterLineId;
+                const std::string& enterLineI1 = sorted[i+1]->enterLineId;
+                const std::string& exitLineI = sorted[i]->exitLineId;
+                const std::string& exitLineI1 = sorted[i+1]->exitLineId;
+
+                // Enter side: lane_i's right edge == lane_{i+1}'s left edge
+                auto enterI = inp.centerlines.find(enterLineI);
+                auto enterI1 = inp.centerlines.find(enterLineI1);
+                bool enterShared = false;
+                std::string sharedEnterEdgeId;
+                if(enterI != inp.centerlines.end() && enterI1 != inp.centerlines.end()) {
+                    const std::string& rightOfI = enterI->second.rightEdgelineId;
+                    const std::string& leftOfI1 = enterI1->second.leftEdgelineId;
+                    if(!rightOfI.empty() && rightOfI == leftOfI1) {
+                        enterShared = true;
+                        sharedEnterEdgeId = rightOfI;
+                    }
+                }
+
+                // Exit side: since exit tangent points inward (opposite to travel direction),
+                // lane_i's left at exit == lane_{i+1}'s right at exit
+                auto exitI = inp.centerlines.find(exitLineI);
+                auto exitI1 = inp.centerlines.find(exitLineI1);
+                bool exitShared = false;
+                std::string sharedExitEdgeId;
+                if(exitI != inp.centerlines.end() && exitI1 != inp.centerlines.end()) {
+                    const std::string& leftOfI = exitI->second.leftEdgelineId;
+                    const std::string& rightOfI1 = exitI1->second.rightEdgelineId;
+                    if(!leftOfI.empty() && leftOfI == rightOfI1) {
+                        exitShared = true;
+                        sharedExitEdgeId = leftOfI;
+                    }
+                }
+
+                if(enterShared && exitShared) {
+                    sharedBetween[i] = true;
+                    sharedEdgeInfos[i] = {sharedEnterEdgeId, sharedExitEdgeId};
+                }
+            }
+
+            // Generate edges for each lane in the group
+            for(size_t i = 0; i < sorted.size(); ++i) {
+                const GeneratedCenterline& gcl = *sorted[i];
+                if(gcl.geom.size() < 2) continue;
+
+                auto connIt = connMap.find(gcl.connectionId);
+                if(connIt == connMap.end()) continue;
+                const Connection* conn = connIt->second;
+
+                bool isSpecial = specialIds.count(gcl.id) > 0;
+
+                // Determine if left edge is shared (from lane i-1's right)
+                bool leftShared = (!isSpecial && i > 0 && sharedBetween[i-1]);
+                // Determine if right edge is shared (with lane i+1's left)
+                bool rightShared = (!isSpecial && i+1 < sorted.size() && sharedBetween[i]);
+
+                // Generate left edge
+                std::string leftElId;
+                if(leftShared) {
+                    // Left edge was already generated as the shared midline for pair (i-1, i)
+                    leftElId = "gen_el_shared_" + sorted[i-1]->id + "_" + gcl.id;
+                } else {
+                    // Generate independent left edge
+                    leftElId = "gen_el_left_" + conn->id;
+                    Polyline leftPts = generateIndependentEdge(gcl, conn, true, inp);
+                    GeneratedEdgeLine el;
+                    el.id = leftElId;
+                    el.geom = leftPts;
+                    el.centerlineId = gcl.id;
+                    el.side = "left";
+                    el.qualityFlags = 0;
+                    result.push_back(el);
+                }
+
+                // Generate right edge
+                std::string rightElId;
+                if(rightShared) {
+                    // Generate a shared midline between lane i and lane i+1
+                    rightElId = "gen_el_shared_" + gcl.id + "_" + sorted[i+1]->id;
+                    Polyline sharedPts = generateSharedMidline(
+                        gcl, *sorted[i+1],
+                        sharedEdgeInfos[i].enterEdgeId,
+                        sharedEdgeInfos[i].exitEdgeId,
+                        inp);
+                    GeneratedEdgeLine el;
+                    el.id = rightElId;
+                    el.geom = sharedPts;
+                    el.centerlineId = gcl.id;
+                    el.side = "right";
+                    el.qualityFlags = 0;
+                    result.push_back(el);
+                } else {
+                    // Generate independent right edge
+                    rightElId = "gen_el_right_" + conn->id;
+                    Polyline rightPts = generateIndependentEdge(gcl, conn, false, inp);
+                    GeneratedEdgeLine el;
+                    el.id = rightElId;
+                    el.geom = rightPts;
+                    el.centerlineId = gcl.id;
+                    el.side = "right";
+                    el.qualityFlags = 0;
+                    result.push_back(el);
+                }
+
+                edgeIdMap[gcl.id] = {leftElId, rightElId};
+            }
+        }
+
+        // Backfill GeneratedCenterline leftEdgelineId / rightEdgelineId
+        for(auto& gcl : centerlines) {
             auto it = edgeIdMap.find(gcl.id);
-            if(it != edgeIdMap.end()){
+            if(it != edgeIdMap.end()) {
                 gcl.leftEdgelineId  = it->second.first;
                 gcl.rightEdgelineId = it->second.second;
             }
@@ -71,96 +219,120 @@ public:
     }
 
 private:
-    void generateGroupEdgeLines(
-        const std::vector<std::pair<int,const Connection*>>& orderedConns,
-        const LaneGroup& grp,
-        const IntersectionInput& inp,
-        const std::map<std::string, const GeneratedCenterline*>& clMap,
-        std::vector<GeneratedEdgeLine>& result,
-        std::map<std::string, std::pair<std::string,std::string>>& edgeIdMap)
+    // Generate a shared midline between two adjacent lanes
+    Polyline generateSharedMidline(
+        const GeneratedCenterline& gclI,
+        const GeneratedCenterline& gclI1,
+        const std::string& sharedEnterEdgeId,
+        const std::string& sharedExitEdgeId,
+        const IntersectionInput& inp) const
     {
-        if(orderedConns.empty()) return;
-
-        for(int i=0;i<(int)orderedConns.size();++i){
-            const Connection* conn = orderedConns[i].second;
-            auto gclIt = clMap.find(conn->id);
-            if(gclIt == clMap.end()) continue;
-            const GeneratedCenterline& gcl = *gclIt->second;
-
-            if(gcl.geom.size()<2) continue;
-
-            // 估算左/右半宽
-            double hwLeft  = estimateHalfWidth(conn->enterLineId, true,  grp, inp);
-            double hwRight = estimateHalfWidth(conn->enterLineId, false, grp, inp);
-
-            // 生成偏移折线（改进法线计算）
-            Polyline leftPts  = offsetPolyline(gcl.geom, hwLeft);
-            Polyline rightPts = offsetPolyline(gcl.geom, -hwRight);
-
-            // 移除过于密集的点（避免偏移产生的近零长度段引起虚假高曲率）
-            removeDuplicates(leftPts, 0.02);
-            removeDuplicates(rightPts, 0.02);
-
-            // 找路口外对应边线的连接端点和切线
-            // 需要按具体组过滤，避免匹配到其它方向的 EXIT 边线
-            std::string enterGrpId = conn->enterGroupId;
-            std::string exitGrpId  = conn->exitGroupId;
-
-            Point2D leftStartPt  = findEdgePtInGroup(conn->enterLineId, true,  enterGrpId, inp, hwLeft);
-            // 退出端：退出线的tangentDir指向路口内（与生成曲线末端方向相反），
-            // 所以退出线视角的"left"是生成曲线视角的"right"，需要翻转isLeft
-            Point2D leftEndPt    = findEdgePtInGroup(conn->exitLineId,  false, exitGrpId,  inp, hwLeft);
-            Point2D rightStartPt = findEdgePtInGroup(conn->enterLineId, false, enterGrpId, inp, hwRight);
-            Point2D rightEndPt   = findEdgePtInGroup(conn->exitLineId,  true,  exitGrpId,  inp, hwRight);
-
-            Point2D enterTangLeft  = getEdgeTangent(conn->enterLineId, inp);
-            Point2D exitTangLeft   = getEdgeTangent(conn->exitLineId,  inp);
-            Point2D enterTangRight = enterTangLeft;
-            Point2D exitTangRight  = exitTangLeft;
-
-            // 中间段移动平均平滑（更多 passes 消除偏移噪声）
-            smoothMiddle(leftPts, 5);
-            smoothMiddle(rightPts, 5);
-
-            // 首尾 G1 贝塞尔重拟合 + 端点对齐
-            // K = 25% of total points, min 6, for sufficient transition
-            int smoothPts = std::max(6, (int)leftPts.size() / 4);
-            bezierAlignEnds(leftPts,  leftStartPt,  enterTangLeft,
-                                      leftEndPt,    exitTangLeft,   smoothPts);
-            smoothPts = std::max(6, (int)rightPts.size() / 4);
-            bezierAlignEnds(rightPts, rightStartPt, enterTangRight,
-                                      rightEndPt,   exitTangRight,  smoothPts);
-
-            // 左边线
-            std::string leftElId  = "gen_el_left_"+conn->id;
-            std::string rightElId = "gen_el_right_"+conn->id;
-            {
-                GeneratedEdgeLine el;
-                el.id                = leftElId;
-                el.geom              = leftPts;
-                el.centerlineId      = gcl.id;
-                el.side              = "left";
-                el.qualityFlags      = 0;
-                result.push_back(el);
-            }
-            // 右边线
-            {
-                GeneratedEdgeLine el;
-                el.id                = rightElId;
-                el.geom              = rightPts;
-                el.centerlineId      = gcl.id;
-                el.side              = "right";
-                el.qualityFlags      = 0;
-                result.push_back(el);
-            }
-            // 记录生成中心线的左右边线ID（需要后续回填到 centerlines 中）
-            edgeIdMap[gcl.id] = {leftElId, rightElId};
+        // Start point = shared enter edge connection point
+        Point2D startPt{0,0};
+        auto enterEdgeIt = inp.edgelines.find(sharedEnterEdgeId);
+        if(enterEdgeIt != inp.edgelines.end()) {
+            startPt = enterEdgeIt->second.connectionPt;
         }
+
+        // End point = shared exit edge connection point
+        Point2D endPt{0,0};
+        auto exitEdgeIt = inp.edgelines.find(sharedExitEdgeId);
+        if(exitEdgeIt != inp.edgelines.end()) {
+            endPt = exitEdgeIt->second.connectionPt;
+        }
+
+        // Start tangent = enter tangent direction (from either lane's enter line, they share the edge)
+        auto enterCl = inp.centerlines.find(gclI.enterLineId);
+        Point2D startTang = (enterCl != inp.centerlines.end())
+            ? enterCl->second.tangentDir : Point2D{0,1};
+
+        // End tangent = exit tangent direction (points inward)
+        // For the Bezier end point, use it as the inward direction matching bezierAlignEnds convention
+        auto exitCl = inp.centerlines.find(gclI.exitLineId);
+        Point2D endTang = (exitCl != inp.centerlines.end())
+            ? exitCl->second.tangentDir : Point2D{0,1};
+
+        // Create cubic Bezier with alpha=0.38, beta=0.38
+        double d = dist(startPt, endPt);
+        if(d < EPS) {
+            // Degenerate case: return a straight line
+            return {startPt, endPt};
+        }
+
+        CubicBezier cb = CubicBezier::fromAlphaBeta(startPt, startTang, endPt, endTang, 0.38, 0.38);
+
+        // Sample adaptively for quality matching existing edges
+        Polyline pts = cb.sampleAdaptive(3.0, 2.0, 0.1);
+        if(pts.empty()) {
+            pts = cb.sampleCount(30);
+        }
+
+        // Ensure exact endpoints
+        if(!pts.empty()) {
+            pts.front() = startPt;
+            pts.back() = endPt;
+        }
+
+        return pts;
     }
 
-    // ═══════════════════════════════════════════
-    // 移除近重复点（距离 < minDist 的连续点）
-    // ═══════════════════════════════════════════
+    // Generate an independent edge (left or right) using offset+smooth+bezierAlignEnds
+    Polyline generateIndependentEdge(
+        const GeneratedCenterline& gcl,
+        const Connection* conn,
+        bool isLeft,
+        const IntersectionInput& inp) const
+    {
+        // Find the enter group
+        auto grpIt = inp.laneGroups.find(conn->enterGroupId);
+        if(grpIt == inp.laneGroups.end()) {
+            // Fallback: simple offset
+            double hw = cfg_.edgeLine.defaultLaneWidth * 0.5;
+            return offsetPolyline(gcl.geom, isLeft ? hw : -hw);
+        }
+        const LaneGroup& grp = grpIt->second;
+
+        // Estimate half-width
+        double hw = estimateHalfWidth(conn->enterLineId, isLeft, grp, inp);
+
+        // Generate offset polyline
+        Polyline pts = offsetPolyline(gcl.geom, isLeft ? hw : -hw);
+
+        // Remove duplicates
+        removeDuplicates(pts, 0.02);
+
+        if(pts.size() < 2) return pts;
+
+        // Find edge endpoint and tangent at enter/exit
+        std::string enterGrpId = conn->enterGroupId;
+        std::string exitGrpId  = conn->exitGroupId;
+
+        Point2D startPt, endPt;
+        if(isLeft) {
+            startPt = findEdgePtInGroup(conn->enterLineId, true,  enterGrpId, inp, hw);
+            // Exit: exit tangent points inward, so left from exit perspective = right from curve perspective (flipped)
+            endPt   = findEdgePtInGroup(conn->exitLineId,  false, exitGrpId,  inp, hw);
+        } else {
+            startPt = findEdgePtInGroup(conn->enterLineId, false, enterGrpId, inp, hw);
+            endPt   = findEdgePtInGroup(conn->exitLineId,  true,  exitGrpId,  inp, hw);
+        }
+
+        Point2D enterTang = getEdgeTangent(conn->enterLineId, inp);
+        Point2D exitTang  = getEdgeTangent(conn->exitLineId,  inp);
+
+        // Smooth middle
+        smoothMiddle(pts, 5);
+
+        // Bezier align ends
+        int smoothPts = std::max(6, (int)pts.size() / 4);
+        bezierAlignEnds(pts, startPt, enterTang, endPt, exitTang, smoothPts);
+
+        return pts;
+    }
+
+    // -----------------------------------------------
+    // Remove near-duplicate consecutive points
+    // -----------------------------------------------
     void removeDuplicates(Polyline& pts, double minDist) const {
         if(pts.size() < 3) return;
         Polyline out;
@@ -174,10 +346,10 @@ private:
         pts = out;
     }
 
-    // ═══════════════════════════════════════════
-    // 改进的偏移折线：使用角平分线法线
-    // offset > 0 向左偏移, < 0 向右
-    // ═══════════════════════════════════════════
+    // -----------------------------------------------
+    // Offset polyline using bisector normals
+    // offset > 0 = left, < 0 = right
+    // -----------------------------------------------
     Polyline offsetPolyline(const Polyline& pts, double offset) const {
         if(pts.size()<2) return pts;
         int n = (int)pts.size();
@@ -187,33 +359,23 @@ private:
         for(int i=0;i<n;++i){
             Point2D normal;
             if(i==0){
-                // 首点：用第一段方向的左法线
                 Point2D dir = (pts[1]-pts[0]).normalized();
                 normal = dir.rotLeft();
             } else if(i==n-1){
-                // 尾点：用最后一段方向的左法线
                 Point2D dir = (pts[n-1]-pts[n-2]).normalized();
                 normal = dir.rotLeft();
             } else {
-                // 中间点：用角平分线法线
-                // 前后两段方向
                 Point2D d1 = (pts[i]-pts[i-1]).normalized();
                 Point2D d2 = (pts[i+1]-pts[i]).normalized();
-                // 两段左法线
                 Point2D n1 = d1.rotLeft();
                 Point2D n2 = d2.rotLeft();
-                // 角平分线法线（求平均并归一化）
                 Point2D avg = n1 + n2;
                 if(avg.norm() < EPS){
-                    // 方向完全反向（180°折角），取 n1
                     normal = n1;
                 } else {
                     normal = avg.normalized();
-                    // 修正偏移量：对尖角进行 miter 补偿
-                    // miter = 1 / cos(半角) = 1 / (n1·avg_normalized)
                     double cosHalf = n1.dot(normal);
                     if(cosHalf > 0.3){
-                        // miter 补偿，但限制最大放大 3 倍
                         double miter = std::min(1.0/cosHalf, 3.0);
                         out.push_back(pts[i] + normal * (offset * miter));
                         continue;
@@ -225,18 +387,17 @@ private:
         return out;
     }
 
-    // ═══════════════════════════════════════════
-    // 中间段移动平均平滑（保留首尾各 margin 个点不动）
-    // ═══════════════════════════════════════════
+    // -----------------------------------------------
+    // Moving average smoothing (preserve head/tail margins)
+    // -----------------------------------------------
     void smoothMiddle(Polyline& pts, int passes) const {
         int n = (int)pts.size();
         if(n < 5) return;
-        int margin = std::max(2, n/8); // 首尾保留区域
+        int margin = std::max(2, n/8);
 
         for(int pass=0; pass<passes; ++pass){
             Polyline tmp = pts;
             for(int i=margin; i<n-margin; ++i){
-                // 5 点加权平均：1-2-4-2-1
                 Point2D sum = pts[i]*4.0;
                 int cnt = 4;
                 if(i-1>=0)   { sum += pts[i-1]*2.0; cnt+=2; }
@@ -249,14 +410,9 @@ private:
         }
     }
 
-    // ═══════════════════════════════════════════
-    // 首尾 G1 贝塞尔重拟合 + 端点对齐
-    // 用三次贝塞尔重构首端 [0..K] 和尾端 [n-1-K..n-1] 的点，
-    // 保证：
-    //   - pts[0] == startPt, pts[n-1] == endPt
-    //   - 首端切线 == startTang（G1 接入路口外边线）
-    //   - 尾端切线 == 沿 endTang 方向（G1 接出路口外边线）
-    // ═══════════════════════════════════════════
+    // -----------------------------------------------
+    // G1 Bezier refit at both ends + endpoint alignment
+    // -----------------------------------------------
     void bezierAlignEnds(Polyline& pts,
         const Point2D& startPt, const Point2D& startTang,
         const Point2D& endPt,   const Point2D& endTang,
@@ -265,22 +421,17 @@ private:
         int n = (int)pts.size();
         if(n < 6) return;
 
-        // K 应覆盖首/尾端点到最近匹配区域，
-        // 使用 n 的比例（20%~30%）+ 最少 4 个点
         K = std::max(4, std::min(K, n/3));
 
-        // 强制端点对齐
         pts.front() = startPt;
         pts.back()  = endPt;
 
-        // ── 首端重拟合 [0..K] ──
-        // 找到 pts[K] 作为锚点（不变），从 startPt 到 pts[K] 做贝塞尔
+        // Head refit [0..K]
         {
             Point2D p0 = startPt;
             Point2D p3 = pts[K];
             double d = dist(p0, p3);
             if(d > EPS){
-                // p3 处切线：由后续点方向估算
                 Point2D t3;
                 if(K+1 < n){
                     t3 = (pts[K+1] - pts[K-1]).normalized();
@@ -298,22 +449,20 @@ private:
             }
         }
 
-        // ── 尾端重拟合 [n-1-K..n-1] ──
+        // Tail refit [n-1-K..n-1]
         {
             int startIdx = n-1-K;
-            if(startIdx < K) startIdx = K; // 避免与首端重叠
+            if(startIdx < K) startIdx = K;
             Point2D p0 = pts[startIdx];
             Point2D p3 = endPt;
             double d = dist(p0, p3);
             if(d > EPS){
-                // p0 处切线：由相邻点方向估算
                 Point2D t0;
                 if(startIdx > 0 && startIdx+1 < n){
                     t0 = (pts[startIdx] - pts[startIdx-1]).normalized();
                 } else {
                     t0 = (p3 - p0).normalized();
                 }
-                // endTang 指向路口内，P2 = P3 + endTang * alpha * d
                 double alpha = 0.38;
                 Point2D p1 = p0 + t0 * (alpha * d);
                 Point2D p2 = p3 + endTang * (alpha * d);
@@ -326,14 +475,13 @@ private:
             }
         }
 
-        // 最终确保端点精确
         pts.front() = startPt;
         pts.back()  = endPt;
     }
 
-    // ═══════════════════════════════════════════
-    // 半宽估算
-    // ═══════════════════════════════════════════
+    // -----------------------------------------------
+    // Estimate half-width from edge endpoints
+    // -----------------------------------------------
     double estimateHalfWidth(const std::string& enterLineId, bool isLeft,
                               const LaneGroup& grp, const IntersectionInput& inp) const
     {
@@ -344,7 +492,6 @@ private:
         Point2D tangent = clit->second.tangentDir;
         Point2D normal  = tangent.rotLeft();
 
-        // 找最近的同侧边线端点
         double bestDist = -1;
         for(auto& eid : grp.edgelineIds){
             auto elit = inp.edgelines.find(eid);
@@ -363,9 +510,9 @@ private:
         return cfg_.edgeLine.defaultLaneWidth * 0.5;
     }
 
-    // ═══════════════════════════════════════════
-    // 找边线端点（限定在指定组内）
-    // ═══════════════════════════════════════════
+    // -----------------------------------------------
+    // Find edge endpoint within a specific group
+    // -----------------------------------------------
     Point2D findEdgePtInGroup(const std::string& lineId, bool isLeft,
                               const std::string& groupId,
                               const IntersectionInput& inp, double hw) const
@@ -377,7 +524,6 @@ private:
         const Point2D& tang  = clit->second.tangentDir;
         Point2D normal = tang.rotLeft();
 
-        // 在指定组的边线中查找
         auto git = inp.laneGroups.find(groupId);
         if(git != inp.laneGroups.end()){
             for(auto& eid : git->second.edgelineIds){
@@ -390,13 +536,12 @@ private:
                 if(!isLeft && lat < -0.01 && std::abs(-lat-hw) < hw*0.8) return ep;
             }
         }
-        // 回退：用中心线连接点+法线偏移
         return clPt + normal*(isLeft?hw:-hw);
     }
 
-    // ═══════════════════════════════════════════
-    // 获取中心线切线方向（用于边线端点切线）
-    // ═══════════════════════════════════════════
+    // -----------------------------------------------
+    // Get tangent direction for a centerline
+    // -----------------------------------------------
     Point2D getEdgeTangent(const std::string& lineId, const IntersectionInput& inp) const {
         auto clit = inp.centerlines.find(lineId);
         if(clit==inp.centerlines.end()) return {0,1};
