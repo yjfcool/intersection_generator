@@ -129,7 +129,7 @@ public:
             if (d01 > EPS) {
                 Point2D dir01 = (full[1] - full[0]).normalized();
                 if (dir01.dot(T0) < 0.990) {  // > ~8 degree deviation
-                    Point2D corrected = full[0] + T0 * std::min(d01, d01 * 0.5);
+                    Point2D corrected = full[0] + T0 * std::min(0.3, d01 * 0.5);
                     // Only apply correction if it doesn't introduce obstacle violation
                     if (idx_.minDist(corrected, safeMargin_ * 2) >= safeMargin_) {
                         full[1] = corrected;
@@ -144,7 +144,7 @@ public:
             if (dLast > EPS) {
                 Point2D dirLast = (full.back() - full[full.size()-2]).normalized();
                 if (dirLast.dot(T3) < 0.990) {  // > ~8 degree deviation
-                    Point2D corrected = full.back() - T3 * std::min(dLast, dLast * 0.5);
+                    Point2D corrected = full.back() - T3 * std::min(0.3, dLast * 0.5);
                     // Only apply correction if it doesn't introduce obstacle violation
                     if (idx_.minDist(corrected, safeMargin_ * 2) >= safeMargin_) {
                         full[full.size()-2] = corrected;
@@ -295,8 +295,18 @@ private:
             0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4, 2.7, 3.0, 3.5, 4.0, 4.5, 5.0
         };
 
+        // Gate: only attempt gap passthrough if at least one offset <= minGapWidth_.
+        // If all offsets that would be tried exceed the minimum gap width, the gap
+        // is too narrow for passthrough and we should skip to the full detour approach.
+        bool hasViableOffset = false;
+        for (double off : offsets) {
+            if (off <= minGapWidth_) { hasViableOffset = true; break; }
+        }
+        if (!hasViableOffset) return {};
+
         // Try each offset, both directions, return first (minimum) that works
         for (double off : offsets) {
+            if (off > minGapWidth_) break;  // no point trying offsets beyond gap width
             // Try left direction
             auto resultL = buildGradualOffsetDetour(curve, iv, leftDir, off);
             if (!resultL.empty() && noViolation(resultL) && !polylineSelfIntersects(resultL)) {
@@ -620,69 +630,6 @@ private:
     }
 
     // ══════════════════════════════════════════════
-    // 4d. Parallel-offset detour: offset the curve uniformly through a gap
-    //     Produces a shape-preserving detour using 4 bezier segments
-    //     gapDir is the perpendicular direction, gapOffset is SIGNED (positive=along gapDir)
-    // ══════════════════════════════════════════════
-    Polyline buildParallelOffsetDetour(
-        const CubicBezier& origCurve,
-        const ViolInterval& iv,
-        const Point2D& gapDir,
-        double gapOffset) const
-    {
-        if (std::abs(gapOffset) < EPS) return {};
-        double span = iv.tOut - iv.tIn;
-        if (span < 0.05) return {};
-
-        // Sample 5 key points along the original curve in [tIn, tOut]
-        double t0 = iv.tIn;
-        double t1 = iv.tIn + span * 0.25;
-        double t2 = iv.tIn + span * 0.50;
-        double t3 = iv.tIn + span * 0.75;
-        double t4 = iv.tOut;
-
-        Point2D P0 = origCurve.eval(t0);  // = iv.pIn (no offset)
-        Point2D P1 = origCurve.eval(t1) + gapDir * gapOffset;
-        Point2D P2 = origCurve.eval(t2) + gapDir * gapOffset;
-        Point2D P3 = origCurve.eval(t3) + gapDir * gapOffset;
-        Point2D P4 = origCurve.eval(t4);  // = iv.pOut (no offset)
-
-        // Tangent directions from original curve at corresponding t-parameters
-        Point2D tang0 = iv.tangIn;  // must match for G1
-        Point2D tang1 = safeNormalize(origCurve.evalDeriv1(t1));
-        Point2D tang2 = safeNormalize(origCurve.evalDeriv1(t2));
-        Point2D tang3 = safeNormalize(origCurve.evalDeriv1(t3));
-        Point2D tang4 = iv.tangOut;  // must match for G1
-
-        // Build 4 bezier segments connecting these points with G1 tangent continuity
-        auto mkSeg = [](const Point2D& A, const Point2D& tA,
-                        const Point2D& B, const Point2D& tB) -> CubicBezier {
-            double d = dist(A, B);
-            if (d < 1e-9) return CubicBezier(A, A, B, B);
-            double alpha = 0.35;
-            double beta = 0.35;
-            return CubicBezier(A, A + tA * (alpha * d), B - tB * (beta * d), B);
-        };
-
-        CubicBezier s1 = mkSeg(P0, tang0, P1, tang1);
-        CubicBezier s2 = mkSeg(P1, tang1, P2, tang2);
-        CubicBezier s3 = mkSeg(P2, tang2, P3, tang3);
-        CubicBezier s4 = mkSeg(P3, tang3, P4, tang4);
-
-        // Sample all segments into a polyline
-        Polyline pts = denseSample(s1, 30);
-        auto sp2 = denseSample(s2, 30);
-        for (size_t i = 1; i < sp2.size(); ++i) pts.push_back(sp2[i]);
-        auto sp3 = denseSample(s3, 30);
-        for (size_t i = 1; i < sp3.size(); ++i) pts.push_back(sp3[i]);
-        auto sp4 = denseSample(s4, 30);
-        for (size_t i = 1; i < sp4.size(); ++i) pts.push_back(sp4[i]);
-
-        if (!pts.empty()) { pts.front() = iv.pIn; pts.back() = iv.pOut; }
-        return pts;
-    }
-
-    // ══════════════════════════════════════════════
     // 4e. Gradual-offset detour: trapezoidal lateral profile
     //     Ramp up gradually, hold at full offset, ramp down gradually
     //     Profile: 0% -> 0, 20% -> 0.4*offset, 40% -> full, 60% -> full, 80% -> 0.4*offset, 100% -> 0
@@ -767,11 +714,11 @@ private:
     bool polylineSelfIntersects(const Polyline& pts) const {
         if (pts.size() < 5) return false;
         size_t n = pts.size();
-        // For large polylines, only check every 2nd segment in both loops
+        // For large polylines, only check every 2nd segment in outer loop (stepI=2)
+        // but keep inner loop at stepJ=1 for full coverage (50% reduction, not 75%)
         size_t stepI = 1, stepJ = 1;
         if (n > 150) {
             stepI = 2;
-            stepJ = 2;
         }
         for (size_t i = 0; i + 3 < n; i += stepI) {
             for (size_t j = i + 3; j + 1 < n; j += stepJ) {
