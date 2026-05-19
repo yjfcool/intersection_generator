@@ -247,6 +247,9 @@ private:
     // ══════════════════════════════════════════════
     Polyline tryGapPassthrough(const CubicBezier& curve, const ViolInterval& iv) const {
         double nudgeOffset = safeMargin_ * 1.5;
+        // Only attempt gap passthrough if the nudge is within reasonable gap dimensions
+        if (nudgeOffset > minGapWidth_) return {};
+
         Point2D leftDir = iv.pushDirLeft;
         Point2D rightDir = iv.pushDirLeft * (-1.0);
 
@@ -364,10 +367,10 @@ private:
         // 过大的 hi 会让 buildTwoSeg 中的中间点 M 远离障碍物，
         // 反而生成形态扭曲的曲线。
         double hi = std::min(segLen * maxOffsetRatio_, 30.0);
-        // 上界至少 = 2 倍 safeMargin，确保最小情况下也能搜到
-        hi = std::max(hi, safeMargin_ * 4.0);
-        // Maximum offset cap: prevent excessive bulging
+        // Conservative cap: prevent excessive bulging beyond 1.5x segment length
         hi = std::min(hi, segLen * 1.5);
+        // But ensure at least 4x safeMargin so small-segment cases can still find solutions
+        hi = std::max(hi, safeMargin_ * 4.0);
 
         // 先检查 hi 是否有效（若 hi 也无法绕过，直接返回 -1）
         {
@@ -537,8 +540,6 @@ private:
         if (pts.size() < 4) return false;
         for (size_t i = 0; i + 2 < pts.size(); ++i) {
             for (size_t j = i + 2; j + 1 < pts.size(); ++j) {
-                // Skip adjacent segments
-                if (j == i + 1) continue;
                 if (segmentsIntersectStrict(pts[i], pts[i+1], pts[j], pts[j+1]))
                     return true;
             }
