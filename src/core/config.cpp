@@ -86,6 +86,11 @@ Config loadConfig(const std::string& path){
         cfg.obstacle.phase3MaxOffsetRatio= jget(c,"phase3_max_offset_ratio",0.75);
         cfg.obstacle.phase3CheckSpacing  = jget(c,"phase3_check_spacing",0.15);
         cfg.obstacle.rightSidePreferThreshold = jget(c,"right_side_prefer_threshold",2.0);
+        cfg.obstacle.minGapWidth         = jget(c,"min_gap_width",2.8);
+        cfg.obstacle.maxCurvatureJump    = jget(c,"max_curvature_jump",0.15);
+        cfg.obstacle.phase3BufTMax       = jget(c,"phase3_buf_t_max",0.35);
+        cfg.obstacle.enableGapAnalysis   = jget(c,"enable_gap_analysis",true);
+        cfg.obstacle.enableCorridorConstraint = jget(c,"enable_corridor_constraint",true);
     }
     if(j.contains("non_intersect")){
         auto& c = j["non_intersect"];

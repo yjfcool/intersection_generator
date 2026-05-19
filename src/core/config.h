@@ -58,6 +58,16 @@ struct ObstacleConfig {
     double phase3CheckSpacing   = 0.15;
     // 右侧通行优先：当左右绕障路径长度差 <= 此阈值时，优先选右侧绕障
     double rightSidePreferThreshold = 2.0; // 米
+    // Gap analysis: minimum passable gap width between obstacles (meters)
+    double minGapWidth = 2.8;
+    // Maximum allowable curvature jump (radians) at detour junction points
+    double maxCurvatureJump = 0.15;
+    // Maximum adaptive buffer in parameter space for Phase3 local detour
+    double phase3BufTMax = 0.35;
+    // Enable gap-between-obstacles analysis
+    bool   enableGapAnalysis = true;
+    // Enable corridor boundary checking in Phase3 local detour
+    bool   enableCorridorConstraint = true;
 };
 
 struct NonIntersectConfig {

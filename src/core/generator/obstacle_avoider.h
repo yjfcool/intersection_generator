@@ -104,7 +104,10 @@ public:
         if (cfg_.enablePhase3) {
             Logger::info("ObstacleAvoider: Phase1/2 failed, trying Phase3 local detour...");
             LocalDetour detour(idx_, safeMargin, cfg_.phase3CheckSpacing,
-                               cfg_.phase3MaxOffsetRatio, cfg_.rightSidePreferThreshold);
+                               cfg_.phase3MaxOffsetRatio, cfg_.rightSidePreferThreshold,
+                               cfg_.minGapWidth, cfg_.maxCurvatureJump, cfg_.phase3BufTMax,
+                               cfg_.enableGapAnalysis, cfg_.enableCorridorConstraint);
+            detour.setCorridor(&corridor);
             // 用 initial 而非 Phase2 的变形结果，保持整体形态
             auto dr = detour.compute(initial, samplingMode, samplingParam);
 
