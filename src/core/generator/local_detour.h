@@ -129,7 +129,11 @@ public:
             if (d01 > EPS) {
                 Point2D dir01 = (full[1] - full[0]).normalized();
                 if (dir01.dot(T0) < 0.995) {  // > ~5.7 degree deviation
-                    full[1] = full[0] + T0 * d01;
+                    Point2D corrected = full[0] + T0 * d01;
+                    // Only apply correction if it doesn't introduce obstacle violation
+                    if (idx_.minDist(corrected, safeMargin_ * 2) >= safeMargin_) {
+                        full[1] = corrected;
+                    }
                 }
             }
         }
@@ -140,7 +144,11 @@ public:
             if (dLast > EPS) {
                 Point2D dirLast = (full.back() - full[full.size()-2]).normalized();
                 if (dirLast.dot(T3) < 0.995) {
-                    full[full.size()-2] = full.back() - T3 * dLast;
+                    Point2D corrected = full.back() - T3 * dLast;
+                    // Only apply correction if it doesn't introduce obstacle violation
+                    if (idx_.minDist(corrected, safeMargin_ * 2) >= safeMargin_) {
+                        full[full.size()-2] = corrected;
+                    }
                 }
             }
         }
@@ -219,6 +227,9 @@ private:
             int minEndBuf = std::max(3, (int)(0.05 * N));  // Reserve 5% at each end
             int iS = std::max(minEndBuf, i - bufN);
             int iE = std::min(N - minEndBuf, j - 1 + bufN);
+
+            // Guard against degenerate interval after endpoint clamping
+            if (iS >= iE) { i = j; continue; }
 
             ViolInterval iv;
             iv.tIn     = iS * 1.0 / N;
