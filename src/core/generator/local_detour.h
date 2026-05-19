@@ -127,25 +127,26 @@ public:
         }
 
         // HARD G1 CHECK at endpoints - reject detour if violated
+        bool g1Ok = true;
         if (full.size() >= 3) {
             Point2D T0 = safeNormalize(curve.evalDeriv1(0.0));
             Point2D actualDirStart = (full[1] - full[0]).normalized();
             if (actualDirStart.dot(T0) < 0.95) {
                 Logger::warn("LocalDetour: G1 violated at start, rejecting detour");
-                res.success = false;
+                g1Ok = false;
             }
 
             Point2D T3 = safeNormalize(curve.evalDeriv1(1.0));
             Point2D actualDirEnd = (full.back() - full[full.size()-2]).normalized();
             if (actualDirEnd.dot(T3) < 0.95) {
                 Logger::warn("LocalDetour: G1 violated at end, rejecting detour");
-                res.success = false;
+                g1Ok = false;
             }
         }
 
-        // 验证
+        // 验证: both obstacle clearance AND G1 must pass
         auto remain = idx_.checkViolations(full, safeMargin_);
-        res.success  = remain.empty();
+        res.success  = remain.empty() && g1Ok;
         res.finalPts = full;
         res.relaxedNI = true;
 
@@ -652,7 +653,7 @@ private:
             auto pts = buildMultiSegShallow(origCurve, iv, dir, off);
             if (!pts.empty()) {
                 bool ok = useGapMargin ? noViolationGap(pts) : noViolation(pts);
-                if (ok)
+                if (ok && !polylineSelfIntersects(pts) && passesG1Check(iv, pts))
                     return pts;
             }
         }
