@@ -185,9 +185,16 @@ public:
                     GeneratedEdgeLine el;
                     el.id = rightElId;
                     el.geom = sharedPts;
+                    // centerlineId records the inner lane (lane I). The outer lane (lane I+1)
+                    // references this shared edge via its backfilled leftEdgelineId string,
+                    // so consumers using leftEdgelineId/rightEdgelineId will find it correctly.
                     el.centerlineId = gcl.id;
                     el.side = "right";
-                    el.qualityFlags = 0;
+                    el.qualityFlags = checkSharedMidlineCurvature(
+                        gcl, *sorted[i+1],
+                        sharedEdgeInfos[i].enterEdgeId,
+                        sharedEdgeInfos[i].exitEdgeId,
+                        inp);
                     result.push_back(el);
                 } else {
                     // Generate independent right edge
@@ -241,22 +248,33 @@ private:
             endPt = exitEdgeIt->second.connectionPt;
         }
 
-        // Start tangent = enter tangent direction (from either lane's enter line, they share the edge)
-        auto enterCl = inp.centerlines.find(gclI.enterLineId);
-        Point2D startTang = (enterCl != inp.centerlines.end())
-            ? enterCl->second.tangentDir : Point2D{0,1};
+        // Start tangent = average of enter tangent directions from both lanes
+        auto enterClI = inp.centerlines.find(gclI.enterLineId);
+        auto enterClI1 = inp.centerlines.find(gclI1.enterLineId);
+        Point2D startTangI = (enterClI != inp.centerlines.end())
+            ? enterClI->second.tangentDir : Point2D{0,1};
+        Point2D startTangI1 = (enterClI1 != inp.centerlines.end())
+            ? enterClI1->second.tangentDir : Point2D{0,1};
+        Point2D startTangSum = startTangI + startTangI1;
+        Point2D startTang = (startTangSum.norm() > EPS)
+            ? startTangSum.normalized() : startTangI;
 
-        // End tangent = exit tangent direction (points inward)
-        // For the Bezier end point, use it as the inward direction matching bezierAlignEnds convention
-        auto exitCl = inp.centerlines.find(gclI.exitLineId);
-        Point2D endTang = (exitCl != inp.centerlines.end())
-            ? exitCl->second.tangentDir : Point2D{0,1};
+        // End tangent = average of exit tangent directions from both lanes (points inward)
+        auto exitClI = inp.centerlines.find(gclI.exitLineId);
+        auto exitClI1 = inp.centerlines.find(gclI1.exitLineId);
+        Point2D endTangI = (exitClI != inp.centerlines.end())
+            ? exitClI->second.tangentDir : Point2D{0,1};
+        Point2D endTangI1 = (exitClI1 != inp.centerlines.end())
+            ? exitClI1->second.tangentDir : Point2D{0,1};
+        Point2D endTangSum = endTangI + endTangI1;
+        Point2D endTang = (endTangSum.norm() > EPS)
+            ? endTangSum.normalized() : endTangI;
 
         // Create cubic Bezier with alpha=0.38, beta=0.38
         double d = dist(startPt, endPt);
         if(d < EPS) {
-            // Degenerate case: return a straight line
-            return {startPt, endPt};
+            // Degenerate case: return a single-point polyline to avoid zero-length segments
+            return {startPt};
         }
 
         CubicBezier cb = CubicBezier::fromAlphaBeta(startPt, startTang, endPt, endTang, 0.38, 0.38);
@@ -274,6 +292,58 @@ private:
         }
 
         return pts;
+    }
+
+    // Check shared midline curvature and return quality flags if too high
+    int checkSharedMidlineCurvature(
+        const GeneratedCenterline& gclI,
+        const GeneratedCenterline& gclI1,
+        const std::string& sharedEnterEdgeId,
+        const std::string& sharedExitEdgeId,
+        const IntersectionInput& inp) const
+    {
+        // Reconstruct the Bezier to check curvature (same logic as generateSharedMidline)
+        Point2D startPt{0,0};
+        auto enterEdgeIt = inp.edgelines.find(sharedEnterEdgeId);
+        if(enterEdgeIt != inp.edgelines.end()) {
+            startPt = enterEdgeIt->second.connectionPt;
+        }
+
+        Point2D endPt{0,0};
+        auto exitEdgeIt = inp.edgelines.find(sharedExitEdgeId);
+        if(exitEdgeIt != inp.edgelines.end()) {
+            endPt = exitEdgeIt->second.connectionPt;
+        }
+
+        double d = dist(startPt, endPt);
+        if(d < EPS) return 0;
+
+        auto enterClI = inp.centerlines.find(gclI.enterLineId);
+        auto enterClI1 = inp.centerlines.find(gclI1.enterLineId);
+        Point2D startTangI = (enterClI != inp.centerlines.end())
+            ? enterClI->second.tangentDir : Point2D{0,1};
+        Point2D startTangI1 = (enterClI1 != inp.centerlines.end())
+            ? enterClI1->second.tangentDir : Point2D{0,1};
+        Point2D startTangSum = startTangI + startTangI1;
+        Point2D startTang = (startTangSum.norm() > EPS)
+            ? startTangSum.normalized() : startTangI;
+
+        auto exitClI = inp.centerlines.find(gclI.exitLineId);
+        auto exitClI1 = inp.centerlines.find(gclI1.exitLineId);
+        Point2D endTangI = (exitClI != inp.centerlines.end())
+            ? exitClI->second.tangentDir : Point2D{0,1};
+        Point2D endTangI1 = (exitClI1 != inp.centerlines.end())
+            ? exitClI1->second.tangentDir : Point2D{0,1};
+        Point2D endTangSum = endTangI + endTangI1;
+        Point2D endTang = (endTangSum.norm() > EPS)
+            ? endTangSum.normalized() : endTangI;
+
+        CubicBezier cb = CubicBezier::fromAlphaBeta(startPt, startTang, endPt, endTang, 0.38, 0.38);
+        double maxK = cb.maxCurvature(30);
+        if(maxK > cfg_.bezier.maxCurvature * 2.0) {
+            return QF_WARN_CURVATURE_HIGH;
+        }
+        return 0;
     }
 
     // Generate an independent edge (left or right) using offset+smooth+bezierAlignEnds
