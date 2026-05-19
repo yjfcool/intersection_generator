@@ -60,6 +60,8 @@ struct ObstacleConfig {
     double rightSidePreferThreshold = 2.0; // 米
     // Gap analysis: minimum passable gap width between obstacles (meters)
     double minGapWidth = 2.8;
+    // Reduced safety margin ratio during gap passthrough (fraction of safeMargin)
+    double gapSafeMarginRatio = 0.6;
 };
 
 struct NonIntersectConfig {
