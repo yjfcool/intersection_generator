@@ -122,6 +122,29 @@ public:
             full.back()  = curve.ctrl[3];
         }
 
+        // Ensure G1 at start: direction from full[0] to full[1] must match T0
+        if (full.size() >= 2) {
+            Point2D T0 = safeNormalize(curve.evalDeriv1(0.0));
+            double d01 = dist(full[0], full[1]);
+            if (d01 > EPS) {
+                Point2D dir01 = (full[1] - full[0]).normalized();
+                if (dir01.dot(T0) < 0.995) {  // > ~5.7 degree deviation
+                    full[1] = full[0] + T0 * d01;
+                }
+            }
+        }
+        // Ensure G1 at end: direction from full[size-2] to full.back() must match T3
+        if (full.size() >= 2) {
+            Point2D T3 = safeNormalize(curve.evalDeriv1(1.0));
+            double dLast = dist(full[full.size()-2], full.back());
+            if (dLast > EPS) {
+                Point2D dirLast = (full.back() - full[full.size()-2]).normalized();
+                if (dirLast.dot(T3) < 0.995) {
+                    full[full.size()-2] = full.back() - T3 * dLast;
+                }
+            }
+        }
+
         // 验证
         auto remain = idx_.checkViolations(full, safeMargin_);
         res.success  = remain.empty();
@@ -173,9 +196,9 @@ private:
         std::vector<bool> vio(N + 1, false);
         for (auto& v : viols) vio[v.ptIdx] = true;
 
-        // 计算 P0→P3 的左法线（用于判断左/右）
-        Point2D axis   = (curve.ctrl[3] - curve.ctrl[0]).normalized();
-        Point2D normL  = axis.rotLeft();
+        // 计算 P0→P3 的左法线（用于判断左/右）- no longer used for pushDirLeft
+        // pushDirLeft is now computed per-interval from local tangent
+        (void)0;  // placeholder
 
         // 自适应缓冲：以 t 参数空间为单位，至少 0.05（即 5%曲线参数）；
         // 同时根据 safeMargin 与平均段长动态调整。这是保证 G1 平滑过渡的关键：
@@ -193,8 +216,9 @@ private:
             int j = i;
             while (j <= N && vio[j]) ++j;
             // [i, j-1] 是连续违规段；扩展缓冲
-            int iS = std::max(0, i - bufN);
-            int iE = std::min(N, j - 1 + bufN);
+            int minEndBuf = std::max(3, (int)(0.05 * N));  // Reserve 5% at each end
+            int iS = std::max(minEndBuf, i - bufN);
+            int iE = std::min(N - minEndBuf, j - 1 + bufN);
 
             ViolInterval iv;
             iv.tIn     = iS * 1.0 / N;
@@ -203,7 +227,10 @@ private:
             iv.pOut    = curve.eval(iv.tOut);
             iv.tangIn  = safeNormalize(curve.evalDeriv1(iv.tIn));
             iv.tangOut = safeNormalize(curve.evalDeriv1(iv.tOut));
-            iv.pushDirLeft = normL;
+            // Use tangent at violation midpoint for true local perpendicular direction
+            double tMidViol = (iS + iE) * 0.5 / N;
+            Point2D tangAtMid = safeNormalize(curve.evalDeriv1(tMidViol));
+            iv.pushDirLeft = tangAtMid.rotLeft();
             ivs.push_back(iv);
             i = iE + 1;
         }
@@ -242,27 +269,90 @@ private:
     }
 
     // ══════════════════════════════════════════════
-    // 2b. Simplified gap passthrough: try tiny lateral nudge in both directions
-    //     If the original curve nearly passes through a gap, a small offset will work
+    // 2b. Gap passthrough: scan perpendicular to curve to find obstacle-free corridors
+    //     and build a detour through the nearest gap
     // ══════════════════════════════════════════════
     Polyline tryGapPassthrough(const CubicBezier& curve, const ViolInterval& iv) const {
-        double nudgeOffset = safeMargin_ * 1.5;
-        // Only attempt gap passthrough if the nudge is within reasonable gap dimensions
-        if (nudgeOffset > minGapWidth_) return {};
+        // Scan perpendicular to curve at violation midpoint to find gaps between obstacles
+        double tMid = 0.5 * (iv.tIn + iv.tOut);
+        Point2D midPt = curve.eval(tMid);
+        Point2D tangent = safeNormalize(curve.evalDeriv1(tMid));
+        Point2D perpDir = tangent.rotLeft(); // perpendicular scan direction
 
-        Point2D leftDir = iv.pushDirLeft;
-        Point2D rightDir = iv.pushDirLeft * (-1.0);
+        // Scan along perpendicular to find obstacle-free corridors
+        double scanRange = 15.0; // meters each side
+        int scanSteps = 60;
+        double stepSize = scanRange / scanSteps;
+        double requiredWidth = minGapWidth_;
 
-        // Try right nudge first (right-side preference)
-        auto rightPts = buildTwoSeg(curve, iv, rightDir, nudgeOffset);
-        if (!rightPts.empty() && noViolation(rightPts) && !polylineSelfIntersects(rightPts)) {
-            return rightPts;
+        struct GapInfo { double start; double end; double center; double width; };
+        std::vector<GapInfo> gaps;
+
+        bool inFree = false;
+        double freeStart = 0;
+
+        for (int i = -scanSteps; i <= scanSteps; ++i) {
+            double offset = i * stepSize;
+            Point2D probe = midPt + perpDir * offset;
+            double d = idx_.minDist(probe, safeMargin_ * 4);
+            bool isFree = (d >= safeMargin_);
+
+            if (isFree && !inFree) {
+                freeStart = offset;
+                inFree = true;
+            } else if (!isFree && inFree) {
+                double width = offset - freeStart;
+                if (width >= requiredWidth) {
+                    double center = (freeStart + offset) * 0.5;
+                    gaps.push_back({freeStart, offset, center, width});
+                }
+                inFree = false;
+            }
         }
-        // Try left nudge
-        auto leftPts = buildTwoSeg(curve, iv, leftDir, nudgeOffset);
-        if (!leftPts.empty() && noViolation(leftPts) && !polylineSelfIntersects(leftPts)) {
-            return leftPts;
+        // Check final open gap
+        if (inFree) {
+            double width = scanRange - freeStart;
+            if (width >= requiredWidth) {
+                double center = (freeStart + scanRange) * 0.5;
+                gaps.push_back({freeStart, scanRange, center, width});
+            }
         }
+
+        if (gaps.empty()) return {};
+
+        // Find the gap closest to the original curve position (offset=0)
+        double bestGapCenter = 0;
+        double bestDist = 1e18;
+        for (auto& g : gaps) {
+            if (std::abs(g.center) < bestDist) {
+                bestDist = std::abs(g.center);
+                bestGapCenter = g.center;
+            }
+        }
+
+        // If curve is already in the gap (offset ~0), no detour needed here
+        if (std::abs(bestGapCenter) < safeMargin_ * 0.3) return {};
+
+        // Build a parallel-offset detour through the gap
+        Point2D gapDir = perpDir;
+        double gapOffset = bestGapCenter; // signed: positive = left, negative = right
+
+        // Try parallel offset detour first (better shape preservation)
+        auto parallelResult = buildParallelOffsetDetour(curve, iv, gapDir, gapOffset);
+        if (!parallelResult.empty() && noViolation(parallelResult) && !polylineSelfIntersects(parallelResult)) {
+            Logger::debug("LocalDetour: gap passthrough via parallel offset, offset=" + std::to_string(gapOffset) + "m");
+            return parallelResult;
+        }
+
+        // Fallback: use buildTwoSeg with gap direction/offset
+        Point2D dir = (gapOffset >= 0) ? gapDir : (gapDir * -1.0);
+        double absOffset = std::abs(gapOffset);
+        auto twoSegResult = buildTwoSeg(curve, iv, dir, absOffset);
+        if (!twoSegResult.empty() && noViolation(twoSegResult) && !polylineSelfIntersects(twoSegResult)) {
+            Logger::debug("LocalDetour: gap passthrough via buildTwoSeg, offset=" + std::to_string(absOffset) + "m");
+            return twoSegResult;
+        }
+
         return {};
     }
 
@@ -273,11 +363,11 @@ private:
     // ══════════════════════════════════════════════
     Polyline buildDetour(const CubicBezier& curve, const ViolInterval& iv) const
     {
-        // Try simplified gap passthrough first (tiny nudge)
+        // Try gap passthrough first (scan-based)
         auto gapResult = tryGapPassthrough(curve, iv);
         if (!gapResult.empty()) {
-            Logger::debug("LocalDetour: gap passthrough with tiny nudge successful");
-            logG1(iv, gapResult, "gap-nudge");
+            Logger::debug("LocalDetour: gap passthrough successful");
+            logG1(iv, gapResult, "gap-pass");
             return gapResult;
         }
 
@@ -528,6 +618,69 @@ private:
         for (auto& s : {denseSample(s2), denseSample(s3)}) {
             for (size_t i = 1; i < s.size(); ++i) pts.push_back(s[i]);
         }
+        if (!pts.empty()) { pts.front() = iv.pIn; pts.back() = iv.pOut; }
+        return pts;
+    }
+
+    // ══════════════════════════════════════════════
+    // 4d. Parallel-offset detour: offset the curve uniformly through a gap
+    //     Produces a shape-preserving detour using 4 bezier segments
+    //     gapDir is the perpendicular direction, gapOffset is SIGNED (positive=along gapDir)
+    // ══════════════════════════════════════════════
+    Polyline buildParallelOffsetDetour(
+        const CubicBezier& origCurve,
+        const ViolInterval& iv,
+        const Point2D& gapDir,
+        double gapOffset) const
+    {
+        if (std::abs(gapOffset) < EPS) return {};
+        double span = iv.tOut - iv.tIn;
+        if (span < 0.05) return {};
+
+        // Sample 5 key points along the original curve in [tIn, tOut]
+        double t0 = iv.tIn;
+        double t1 = iv.tIn + span * 0.25;
+        double t2 = iv.tIn + span * 0.50;
+        double t3 = iv.tIn + span * 0.75;
+        double t4 = iv.tOut;
+
+        Point2D P0 = origCurve.eval(t0);  // = iv.pIn (no offset)
+        Point2D P1 = origCurve.eval(t1) + gapDir * gapOffset;
+        Point2D P2 = origCurve.eval(t2) + gapDir * gapOffset;
+        Point2D P3 = origCurve.eval(t3) + gapDir * gapOffset;
+        Point2D P4 = origCurve.eval(t4);  // = iv.pOut (no offset)
+
+        // Tangent directions from original curve at corresponding t-parameters
+        Point2D tang0 = iv.tangIn;  // must match for G1
+        Point2D tang1 = safeNormalize(origCurve.evalDeriv1(t1));
+        Point2D tang2 = safeNormalize(origCurve.evalDeriv1(t2));
+        Point2D tang3 = safeNormalize(origCurve.evalDeriv1(t3));
+        Point2D tang4 = iv.tangOut;  // must match for G1
+
+        // Build 4 bezier segments connecting these points with G1 tangent continuity
+        auto mkSeg = [](const Point2D& A, const Point2D& tA,
+                        const Point2D& B, const Point2D& tB) -> CubicBezier {
+            double d = dist(A, B);
+            if (d < 1e-9) return CubicBezier(A, A, B, B);
+            double alpha = 0.35;
+            double beta = 0.35;
+            return CubicBezier(A, A + tA * (alpha * d), B - tB * (beta * d), B);
+        };
+
+        CubicBezier s1 = mkSeg(P0, tang0, P1, tang1);
+        CubicBezier s2 = mkSeg(P1, tang1, P2, tang2);
+        CubicBezier s3 = mkSeg(P2, tang2, P3, tang3);
+        CubicBezier s4 = mkSeg(P3, tang3, P4, tang4);
+
+        // Sample all segments into a polyline
+        Polyline pts = denseSample(s1, 30);
+        auto sp2 = denseSample(s2, 30);
+        for (size_t i = 1; i < sp2.size(); ++i) pts.push_back(sp2[i]);
+        auto sp3 = denseSample(s3, 30);
+        for (size_t i = 1; i < sp3.size(); ++i) pts.push_back(sp3[i]);
+        auto sp4 = denseSample(s4, 30);
+        for (size_t i = 1; i < sp4.size(); ++i) pts.push_back(sp4[i]);
+
         if (!pts.empty()) { pts.front() = iv.pIn; pts.back() = iv.pOut; }
         return pts;
     }
