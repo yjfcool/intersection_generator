@@ -110,7 +110,11 @@ public:
         Polyline full;
         double tCur = 0.0;
 
-        for (auto& iv : merged) {
+        for (size_t ivIdx = 0; ivIdx < merged.size(); ++ivIdx) {
+            auto& iv = merged[ivIdx];
+            // Determine expansion limits to avoid overlap with neighbors
+            double nextTIn = (ivIdx + 1 < merged.size()) ? merged[ivIdx + 1].tIn : 1.0;
+
             // Curvature continuity feedback: retry with expanded interval if junction angle too large
             Polyline det;
             ViolInterval expandedIv = iv;
@@ -124,6 +128,9 @@ public:
                 double expand = span * 0.15;
                 expandedIv.tIn  = std::max(0.0, expandedIv.tIn - expand);
                 expandedIv.tOut = std::min(1.0, expandedIv.tOut + expand);
+                // Clamp to avoid overlap: tIn must not go below tCur, tOut must not exceed next interval's tIn
+                expandedIv.tIn  = std::max(tCur, expandedIv.tIn);
+                expandedIv.tOut = std::min(nextTIn, expandedIv.tOut);
                 expandedIv.pIn  = curve.eval(expandedIv.tIn);
                 expandedIv.pOut = curve.eval(expandedIv.tOut);
                 expandedIv.tangIn  = safeNormalize(curve.evalDeriv1(expandedIv.tIn));
@@ -131,9 +138,9 @@ public:
                 // Recompute pushDirLeft at new midpoint
                 double newMidT = 0.5 * (expandedIv.tIn + expandedIv.tOut);
                 expandedIv.pushDirLeft = safeNormalize(curve.evalDeriv1(newMidT)).rotLeft();
-                Logger::debug("LocalDetour: curvature jump " + std::to_string(jAngle)
-                              + " > " + std::to_string(maxCurvatureJump_)
-                              + ", expanding buffer (retry " + std::to_string(retry+1) + ")");
+                Logger::debug("LocalDetour: curvature jump " + std::to_string(jAngle * 180.0 / M_PI)
+                              + " deg > " + std::to_string(maxCurvatureJump_ * 180.0 / M_PI)
+                              + " deg, expanding buffer (retry " + std::to_string(retry+1) + ")");
             }
 
             // Use expandedIv for the actual interval boundaries
@@ -606,7 +613,14 @@ private:
         // Tangent directions along path
         Point2D chord = (iv.pOut - iv.pIn).normalized();
         Point2D perp = dir.rotLeft().normalized();
-        Point2D tangMid = (perp.dot(chord) >= 0) ? perp : (perp * -1.0);
+        Point2D tangMid;
+        // Fallback: when chord is nearly parallel to dir, perp.dot(chord) is near zero
+        // and sign can flip unpredictably. Use chord directly as tangMid in that case.
+        if (std::abs(perp.dot(chord)) < 0.1) {
+            tangMid = chord;
+        } else {
+            tangMid = (perp.dot(chord) >= 0) ? perp : (perp * -1.0);
+        }
 
         // Tangents at intermediate points: blend between tangIn/tangOut and tangMid
         Point2D tang25 = safeNormalize(iv.tangIn * 0.5 + tangMid * 0.5);
@@ -660,7 +674,7 @@ private:
         for (int i = -scanSteps; i <= scanSteps; ++i) {
             double offset = i * stepSize;
             Point2D probe = midPt + perpDir * offset;
-            double d = idx_.minDist(probe, safeMargin_ * 3);
+            double d = idx_.minDist(probe, std::max(safeMargin_ * 3, 5.0));
             if (d < safeMargin_) {
                 if (inGap && (offset - gapStart) >= (minGapWidth_ + 2 * safeMargin_)) {
                     gaps.push_back({(gapStart + offset) * 0.5, offset - gapStart});
@@ -707,18 +721,26 @@ private:
 
         // Check if any point exceeds corridor bounds using distance heuristic
         for (auto& pt : candidate) {
+            // Check left boundary independently
             if (corridor_->leftBoundary && corridor_->leftBoundary->size() >= 2) {
                 double minD = pointToPolylineDist(pt, *corridor_->leftBoundary);
-                // If a point is very far from both boundaries, it might be outside
-                // Use a conservative check: only reject if far beyond corridor half-width
-                if (minD > corridor_->minHalfWidth * 8.0) {
-                    // Check if also far from right boundary
+                if (minD > corridor_->minHalfWidth * 3.0) {
+                    // Also check right boundary if available
                     if (corridor_->rightBoundary && corridor_->rightBoundary->size() >= 2) {
                         double minDR = pointToPolylineDist(pt, *corridor_->rightBoundary);
-                        if (minDR > corridor_->minHalfWidth * 8.0) {
-                            return {}; // exceeds corridor
+                        if (minDR > corridor_->minHalfWidth * 3.0) {
+                            return {}; // exceeds corridor on both sides
                         }
+                    } else {
+                        // Only left boundary defined and point is far from it
+                        return {};
                     }
+                }
+            } else if (corridor_->rightBoundary && corridor_->rightBoundary->size() >= 2) {
+                // Only right boundary defined
+                double minDR = pointToPolylineDist(pt, *corridor_->rightBoundary);
+                if (minDR > corridor_->minHalfWidth * 3.0) {
+                    return {};
                 }
             }
         }
