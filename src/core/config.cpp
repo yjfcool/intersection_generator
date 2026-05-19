@@ -57,6 +57,10 @@ Config loadConfig(const std::string& path){
         cfg.bezier.alphaUturn            = jget(c,"alpha_uturn",0.50);
         cfg.bezier.maxCurvature          = jget(c,"max_curvature",0.333);
         cfg.bezier.twoSegMidOffsetRatio  = jget(c,"two_segment_mid_offset_ratio",0.30);
+        if(c.contains("force_single_segment"))
+            cfg.bezier.forceSingleSegment = c["force_single_segment"].get<bool>();
+        if(c.contains("uturn_composite_dot_threshold"))
+            cfg.bezier.uturnCompositeDotThreshold = c["uturn_composite_dot_threshold"].get<double>();
     }
     if(j.contains("sampling")){
         auto& c = j["sampling"];

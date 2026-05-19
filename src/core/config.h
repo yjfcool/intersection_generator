@@ -28,6 +28,8 @@ struct BezierConfig {
     double alphaUturn    = 0.50;
     double maxCurvature  = 0.333;       // 触发两段的曲率阈值(1/m)
     double twoSegMidOffsetRatio = 0.30;
+    bool   forceSingleSegment = true;
+    double uturnCompositeDotThreshold = 0.5;
 };
 
 struct SamplingConfig {

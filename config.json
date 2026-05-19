@@ -1,81 +1,136 @@
 {
   "coordinate": {
+    "desc_output_wgs84": "是否将输出坐标转换为WGS84经纬度。false=输出投影坐标(米)，true=输出WGS84。输入为WGS84时系统内部自动转投影坐标计算，此项仅控制输出格式。",
     "output_wgs84": false
   },
   "tangent": {
+    "desc_mode": "切线估算模式。last_segment=使用进入/退出线最后一段方向作为切线；fit=使用末尾fit_points个点拟合方向。推荐last_segment，数据质量差时可尝试fit。",
     "mode": "last_segment",
+    "desc_fit_points": "当mode=fit时，使用末尾多少个点进行方向拟合。值越大越平滑但可能偏离实际端点方向。取值范围：2~10。",
     "fit_points": 2
   },
   "connection_mode": {
+    "desc_fan_mode": "扇出模式。independent=每条连通关系独立生成曲线（推荐）；grouped=同组连通关系共享控制策略。",
     "fan_mode": "independent",
+    "desc_merge_at_entry_length": "进入端合并长度(米)。设为0表示不合并。>0时同组车道在进入端前merge_at_entry_length距离内逐渐合并为一条。一般设为0。",
     "merge_at_entry_length": 0.0
   },
   "edge_line": {
-    "desc_mode": "fixed_offset | centerline_interp",
+    "desc_mode": "边线生成模式。centerline_interp=基于中心线偏移+插值（推荐）；fixed_offset=固定偏移量。",
     "mode": "centerline_interp",
+    "desc_endpoint_smooth_points": "边线首尾端点G1平滑过渡区域的点数。值越大过渡越平缓但计算量增大。取值范围：2~10。",
     "endpoint_smooth_points": 4,
+    "desc_default_lane_width": "默认车道宽度(米)。当无法从输入数据中估算车道宽度时使用此默认值。典型城市道路3.5m，高速3.75m。",
     "default_lane_width": 3.5
   },
   "bezier": {
+    "desc_alpha_straight": "直行连接的控制点距离比例。P1=P0+T0*alpha*d，其中d为起终点距离。值越大曲线越'饱满'，越小越接近直线。取值范围：0.20~0.60。",
     "alpha_straight": 0.35,
+    "desc_alpha_right": "右转连接的控制点距离比例。影响右转弯曲程度。值越大弯曲越平缓（曲率越低）但曲线越长。取值范围：0.25~0.60。",
     "alpha_right": 0.35,
+    "desc_alpha_left": "左转连接的控制点距离比例。左转通常需要比右转更大的alpha以获得平滑曲线。取值范围：0.30~0.70。",
     "alpha_left": 0.45,
+    "desc_alpha_uturn": "调头连接的控制点距离比例。调头需要较大alpha使曲线深入路口。取值范围：0.40~0.80。",
     "alpha_uturn": 0.50,
+    "desc_max_curvature": "最大曲率阈值(1/米)。当force_single_segment=false时，超过此值的曲线会被升级为复合贝塞尔。0.333对应最小转弯半径3米。取值范围：0.10~1.00。",
     "max_curvature": 0.333,
-    "two_segment_mid_offset_ratio": 0.30
+    "desc_two_segment_mid_offset_ratio": "复合贝塞尔中间点偏移比例。中间点M距弦中点的偏移=base*ratio。值越大U形越深。取值范围：0.20~0.60。",
+    "two_segment_mid_offset_ratio": 0.30,
+    "desc_force_single_segment": "是否强制非调头连接使用单段贝塞尔。true(推荐)=直行/左转/右转始终用单段，避免复合贝塞尔产生S形变形；false=按曲率阈值判定是否需要两段(旧逻辑，不推荐)。",
+    "force_single_segment": true,
+    "desc_uturn_composite_dot_threshold": "调头连接触发复合贝塞尔的切线点积阈值。T0·T3>此值时才使用两段贝塞尔。1.0=切线完全同向才触发；0.5=夹角<60°即触发；0.0=任何调头都用两段；-1.0=调头也强制单段。取值范围：-1.0~1.0。",
+    "uturn_composite_dot_threshold": 0.5
   },
   "sampling": {
+    "desc_mode": "曲线采样模式。adaptive(推荐)=根据曲率自适应加密；fixed_spacing=固定间距采样；fixed_count=固定点数采样。",
     "mode": "adaptive",
+    "desc_adaptive_max_angle_deg": "自适应采样时相邻采样段的最大转角(度)。值越小采样越密集、曲线越精细但点数越多。取值范围：0.1~5.0。",
     "adaptive_max_angle_deg": 0.5,
+    "desc_adaptive_max_seg_length": "自适应采样的最大线段长度(米)。即使曲率为0，线段也不会超过此长度。取值范围：0.5~10.0。",
     "adaptive_max_seg_length": 2.0,
+    "desc_adaptive_min_seg_length": "自适应采样的最小线段长度(米)。防止高曲率处采样过密。取值范围：0.01~0.5。",
     "adaptive_min_seg_length": 0.05,
+    "desc_fixed_spacing": "固定间距采样时的间距(米)。仅当mode=fixed_spacing时有效。取值范围：0.1~5.0。",
     "fixed_spacing": 0.5,
+    "desc_fixed_count": "固定点数采样的采样点数。仅当mode=fixed_count时有效。取值范围：10~500。",
     "fixed_count": 50
   },
   "obstacle": {
+    "desc_avoid": "是否启用障碍物避障。true=生成曲线时自动绕避障碍物；false=忽略障碍物直接生成。",
     "avoid": true,
+    "desc_safe_margin": "障碍物安全距离(米)。曲线与障碍物的最小距离要求。值越大越安全但可用空间越小。取值范围：0.1~5.0。",
     "safe_margin": 1.75,
+    "desc_check_spacing": "避障检测采样间距(米)。沿曲线每隔此距离检测一次是否侵入障碍物。值越小检测越精确但计算量越大。取值范围：0.05~1.0。",
     "check_spacing": 0.2,
+    "desc_phase1_max_iter": "Phase1(控制点推移)最大迭代次数。Phase1通过调整alpha/beta使曲线绕开障碍物。值越大成功率越高但耗时越长。取值范围：10~200。",
     "phase1_max_iter": 50,
+    "desc_phase1_step_decay": "Phase1每轮迭代的步长衰减系数。值越小收敛越快但可能陷入局部最优。取值范围：0.5~0.99。",
     "phase1_step_decay": 0.9,
+    "desc_phase2_max_iter": "Phase2(梯度下降优化)最大迭代次数。Phase2通过数值优化精确调整曲线。取值范围：50~500。",
     "phase2_max_iter": 200,
+    "desc_phase2_w_curvature": "Phase2目标函数中曲率能量的权重。值越大越倾向生成低曲率曲线。取值范围：0.1~10.0。",
     "phase2_w_curvature": 1.0,
+    "desc_phase2_w_length": "Phase2目标函数中弧长的权重。值越大越倾向生成短曲线。取值范围：0.01~1.0。",
     "phase2_w_length": 0.1,
+    "desc_phase2_w_obstacle": "Phase2目标函数中障碍物惩罚的权重。值越大越严格避障。取值范围：1.0~100.0。",
     "phase2_w_obstacle": 10.0,
+    "desc_enable_phase2": "是否启用Phase2梯度下降优化。关闭可加快速度但避障效果降低。",
     "enable_phase2": true,
+    "desc_enable_phase3": "是否启用Phase3局部绕障。Phase3在Phase1/2均失败时用局部贝塞尔段绕行障碍物。关闭后Phase1/2失败将直接标记穿越警告。",
     "enable_phase3": true,
+    "desc_phase3_max_offset_ratio": "Phase3局部绕障的最大偏移比例。偏移量=safe_margin*此值。值越大绕障幅度越大但曲线变形越大。取值范围：1.0~10.0。",
     "phase3_max_offset_ratio": 4.0,
+    "desc_phase3_check_spacing": "Phase3局部绕障的检测间距(米)。取值范围：0.05~0.5。",
     "phase3_check_spacing": 0.15
   },
   "non_intersect": {
+    "desc_corridor_min_half_width": "走廊最小半宽(米)。每条曲线分配的最小横向空间。值越大曲线间距越大但可能超出路口边界。取值范围：0.1~2.0。",
     "corridor_min_half_width": 0.3,
+    "desc_enable_mid_uturn_exclude": "是否排除中间调头车道的非相交约束。true=中间调头车道允许与其他曲线相交（因调头曲线穿越路口中心，物理上必然交叉）。",
     "enable_mid_uturn_exclude": true,
+    "desc_max_fix_iter": "非相交约束修复的最大迭代次数(旧参数，已被global_max_iter替代，保留用于向后兼容)。",
     "max_fix_iter": 20,
+    "desc_allow_uturn_intersect": "是否允许调头曲线之间互相相交。true=两条调头曲线之间不强制非相交约束；false=所有曲线都必须满足非相交。",
     "allow_uturn_intersect": true,
+    "desc_extreme_cross_angle_threshold": "极端交叉角度阈值(度)。当进入切线与弦方向的夹角超过此值时，判定为极端交叉场景，跳过非相交约束(因几何上无法解决)。取值范围：120~170。",
     "extreme_cross_angle_threshold": 150.0,
+    "desc_spread_gradual_ratio": "渐变展开比例。控制非相交偏移在曲线端点附近的渐变区域大小。0=无渐变(端点处也有完全偏移)，0.5=前后各50%区域有渐变。取值范围：0.0~0.5。",
     "spread_gradual_ratio": 0.3,
+    "desc_global_max_iter": "非相交约束全局求解器的最大迭代次数。三阶段策略(alpha/beta调整→gamma横移→联合调整)的总迭代预算。值越大求解成功率越高但耗时越长。取值范围：20~200。",
     "global_max_iter": 80
   },
   "conflict": {
-    "desc_priority": "non_intersect | obstacle | both_error",
+    "desc_priority": "避障与非相交约束冲突时的优先级策略。non_intersect=非相交优先(避障降级为警告)；obstacle=避障优先(相交降级为警告)；both_error=两者均标记错误。",
     "priority": "non_intersect",
+    "desc_enable_joint_optimization": "是否启用联合优化。true=同时优化避障和非相交(实验性功能，计算量大)；false=分阶段处理(推荐)。",
     "enable_joint_optimization": false,
+    "desc_joint_w_non_intersect": "联合优化中非相交约束的权重。仅当enable_joint_optimization=true时有效。取值范围：1.0~1000.0。",
     "joint_w_non_intersect": 100.0,
+    "desc_joint_w_obstacle": "联合优化中避障约束的权重。仅当enable_joint_optimization=true时有效。取值范围：1.0~100.0。",
     "joint_w_obstacle": 10.0
   },
   "intersection_polygon": {
+    "desc_snap_tolerance": "路口面顶点吸附容差(米)。距离小于此值的顶点会被合并。取值范围：0.1~2.0。",
     "snap_tolerance": 0.5,
+    "desc_winding": "路口面多边形绕向。clockwise=顺时针；counterclockwise=逆时针。通常按地图标准选择。",
     "winding": "clockwise",
+    "desc_inter_edge_mode": "路口面边线之间的连接方式。direct=直线连接相邻边线端点；arc=弧线连接(保持圆滑)。",
     "inter_edge_mode": "direct"
   },
   "output": {
+    "desc_format": "输出格式。json=仅JSON；shapefile=仅Shapefile；both=两种都输出。Shapefile可用QGIS打开查看。",
     "format": "both",
+    "desc_output_dir": "输出目录路径。生成的文件将保存在此目录下。当启用避障(avoid=true)时自动追加_avoid后缀。",
     "output_dir": "./output",
+    "desc_shp_encoding": "Shapefile属性表的字符编码。推荐UTF-8。",
     "shp_encoding": "UTF-8",
+    "desc_json_pretty": "JSON输出是否格式化(缩进美化)。true=可读性好但文件较大；false=紧凑单行输出。",
     "json_pretty": true
   },
   "performance": {
+    "desc_grid_cell_count": "障碍物空间索引的网格单元数。值越大空间查询越快但内存占用越大。取值范围：100~10000。",
     "grid_cell_count": 400,
+    "desc_timeout_ms": "单个场景处理的超时时间(毫秒)。超时后中止处理并输出已完成部分。0=无超时限制。取值范围：1000~60000。",
     "timeout_ms": 10000
   }
 }
